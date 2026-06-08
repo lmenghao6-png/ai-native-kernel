@@ -1,0 +1,143 @@
+name: Build AegisOS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-bastion:
+    name: Build Bastion Kernel
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld make git cpio
+
+      - name: Build Bastion kernel
+        run: |
+          make all -j$(nproc)
+          ls -lh build/aikernel.elf
+          ls -lh build/initramfs.cpio
+
+      - name: QEMU boot test
+        run: |
+          sudo apt-get install -y -qq qemu-system-x86 ovmf
+          make fat
+          timeout 20 qemu-system-x86_64 -machine pc,graphics=off \
+            -bios /usr/share/ovmf/OVMF.fd -m 256M -no-reboot \
+            -nographic -serial mon:stdio \
+            -drive file=fat:rw:build/fatroot 2>&1 | tee boot.log
+          grep -q "bastion>" boot.log && echo "KERNEL BOOT OK" || echo "BOOT FAILED"
+          grep -q "\[vfs\] initialized" boot.log && echo "VFS OK"
+          grep -q "\[initramfs\]" boot.log && echo "INITRAMFS OK"
+
+      - name: Upload kernel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bastion-kernel
+          path: |
+            build/aikernel.elf
+            build/initramfs.cpio
+            boot.log
+
+  build-distro:
+    name: Build AegisOS Distribution
+    runs-on: ubuntu-24.04
+    needs: build-bastion
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mmdebstrap squashfs-tools grub-pc-bin \
+            grub-efi-amd64-bin xorriso parted dosfstools rsync wget
+
+      - name: Build rootfs
+        run: |
+          sudo bash tools/build-aegisos-rootfs.sh 2>&1 | tail -20
+
+      - name: Download AI model
+        run: |
+          mkdir -p build/aegisos/linux-rootfs/usr/local/share/aegisos/models
+          wget -q -O build/aegisos/linux-rootfs/usr/local/share/aegisos/models/qwen2.5-0.5b-q4_k_m.gguf \
+            https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf
+
+      - name: Build ISO
+        run: |
+          mksquashfs build/aegisos/linux-rootfs build/aegisos/aegisos-root.squashfs -comp xz -b 256K -noappend
+          mkdir -p build/aegisos/iso/boot/grub build/aegisos/iso/live build/aegisos/image
+          cp build/aegisos/linux-rootfs/boot/vmlinuz-* build/aegisos/iso/boot/vmlinuz
+          cp build/aegisos/linux-rootfs/boot/initrd.img-* build/aegisos/iso/boot/initrd.img 2>/dev/null || \
+            cp build/aegisos/linux-rootfs/initrd.img build/aegisos/iso/boot/initrd.img
+          cp build/aegisos/aegisos-root.squashfs build/aegisos/iso/live/filesystem.squashfs
+          
+          cat > build/aegisos/iso/boot/grub/grub.cfg << 'EOF'
+          set default=0
+          set timeout=5
+          menuentry "AegisOS 0.3-beta (Live)" {
+              linux /boot/vmlinuz boot=live components quiet console=ttyS0,115200
+              initrd /boot/initrd.img
+          }
+          menuentry "Install AegisOS to Disk" {
+              linux /boot/vmlinuz boot=live components quiet console=ttyS0,115200 systemd.unit=aegisos-installer.service
+              initrd /boot/initrd.img
+          }
+          EOF
+          
+          grub-mkrescue -o build/aegisos/image/aegisos-beta.iso build/aegisos/iso -- -volid AEGISOS
+          ls -lh build/aegisos/image/aegisos-beta.iso
+
+      - name: QEMU ISO boot test
+        run: |
+          sudo apt-get install -y -qq qemu-system-x86 ovmf
+          timeout 60 qemu-system-x86_64 -machine q35 -m 1G -no-reboot \
+            -nographic -serial mon:stdio \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/ovmf/OVMF.fd \
+            -cdrom build/aegisos/image/aegisos-beta.iso 2>&1 | tee iso_boot.log
+          grep -q "AegisOS" iso_boot.log && echo "ISO BOOT OK" || echo "ISO BOOT CHECK"
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aegisos-beta-iso
+          path: |
+            build/aegisos/image/aegisos-beta.iso
+            iso_boot.log
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-bastion, build-distro]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: aegisos-beta-iso
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            aegisos-beta.iso
+          body: |
+            AegisOS ${{ github.ref_name }}
+            
+            ## What's included
+            - AI Console with local Qwen2.5-0.5B model
+            - Agent Framework (5 sensors + 3 actors)
+            - Bastion v0.3 kernel (VFS + initramfs + ELF loader)
+            - Guided installer
+            - Development tools (git, gcc, make, vim, htop)
+            
+            ## Quick start
+            1. Write ISO to USB: `dd if=aegisos-beta.iso of=/dev/sdX bs=4M`
+            2. Boot in UEFI mode
+            3. Select "Install AegisOS to Disk" in GRUB
+            4. Reboot → AI Console auto-starts

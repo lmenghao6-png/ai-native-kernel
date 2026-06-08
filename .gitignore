@@ -1,0 +1,9 @@
+build/
+*.iso
+*.raw
+*.tar
+*.squashfs
+*.gguf
+__pycache__/
+*.pyc
+
