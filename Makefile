@@ -3,6 +3,7 @@
 
 CC=clang
 LD=ld.lld
+OBJCOPY=llvm-objcopy
 TARGET=x86_64-unknown-none-elf
 
 KERNEL_DIR=kernel
@@ -36,6 +37,7 @@ USER_CFLAGS=--target=$(TARGET) -std=gnu11 -ffreestanding -nostdlib -fPIC \
 # Initramfs
 INITRAMFS_CPIO=$(BUILD_DIR)/initramfs.cpio
 INITRAMFS_OBJ=$(OBJ_DIR)/initramfs.cpio.o
+INITRAMFS_STAGING=$(BUILD_DIR)/initramfs_staging
 
 C_SRCS=$(shell find $(SRC_DIR) -name '*.c')
 S_SRCS=$(shell find $(SRC_DIR) -name '*.S')
@@ -43,7 +45,7 @@ C_OBJS=$(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.c.o,$(C_SRCS))
 S_OBJS=$(patsubst $(SRC_DIR)/%.S,$(OBJ_DIR)/%.S.o,$(S_SRCS))
 ALL_OBJS=$(C_OBJS) $(S_OBJS) $(INITRAMFS_OBJ)
 
-.PHONY: all clean dist fat qemu user
+.PHONY: all clean dist fat qemu user test test-python test-kernel test-iso test-install
 
 all: $(KERNEL_ELF)
 
@@ -56,15 +58,16 @@ $(USER_BUILD)/hello.elf: $(USER_DIR)/hello.c
 
 $(INITRAMFS_CPIO): $(USER_BUILD)/hello.elf
 	@mkdir -p $(BUILD_DIR)
-	@rm -rf /tmp/initramfs_staging
-	@mkdir -p /tmp/initramfs_staging/bin
-	@cp $< /tmp/initramfs_staging/bin/hello
-	@cd /tmp/initramfs_staging && find . | cpio -o -H newc > $@ 2>/dev/null
-	@rm -rf /tmp/initramfs_staging
+	@rm -rf $(INITRAMFS_STAGING)
+	@mkdir -p $(INITRAMFS_STAGING)/bin
+	@cp $< $(INITRAMFS_STAGING)/bin/hello
+	@cd $(INITRAMFS_STAGING) && find . | cpio -o -H newc > "$(abspath $@)" 2>/dev/null
+	@rm -rf $(INITRAMFS_STAGING)
 
 $(INITRAMFS_OBJ): $(INITRAMFS_CPIO)
 	@mkdir -p $(dir $@)
 	$(LD) -m elf_x86_64 -r -b binary -o $@ $<
+	$(OBJCOPY) --rename-section .data=.initramfs,alloc,load,readonly,data,contents $@
 
 $(OBJ_DIR)/%.c.o: $(SRC_DIR)/%.c
 	@mkdir -p $(dir $@)
@@ -113,14 +116,28 @@ aegisos-image:
 qemu: fat
 	qemu-system-x86_64 -machine pc,graphics=off -bios $(OVMF) -m 256M -no-reboot \
 		-nographic -serial mon:stdio \
-		-drive file=fat:rw:$(FAT_DIR)
+		-drive format=raw,file=fat:rw:$(FAT_DIR)
 
 qemu-debug: fat
 	qemu-system-x86_64 -machine pc -bios $(OVMF) -m 256M -no-reboot -d cpu_reset,int \
 		-nographic -serial mon:stdio \
-		-drive file=fat:rw:$(FAT_DIR)
+		-drive format=raw,file=fat:rw:$(FAT_DIR)
 
 run: qemu
+
+test: test-python test-kernel
+
+test-python:
+	python3 -m unittest discover -s tests -v
+
+test-kernel: all fat
+	bash tools/test-bastion-boot.sh
+
+test-iso:
+	expect tools/test-aegisos-iso.exp
+
+test-install:
+	expect tools/test-aegisos-install.exp
 
 clean:
 	rm -rf $(BUILD_DIR)

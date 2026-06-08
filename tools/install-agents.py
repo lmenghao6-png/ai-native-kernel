@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-import os, sys
+import os
+import sys
+
 ROOTFS = sys.argv[1] if len(sys.argv) > 1 else 'build/aegisos/linux-rootfs'
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def W(p, c, m=0o644):
     f = os.path.join(ROOTFS, p.lstrip('/'))
@@ -67,48 +70,72 @@ else:
             else: print('No AI configured.')
         except Exception as e: print(f'Error: {e}')
 ''', 0o755)
-W('/usr/local/bin/aegisos-install', '''#!/bin/bash
-set -e
-clear
-echo '=== AegisOS 0.3-beta Installer ==='
-echo 'WARNING: This will ERASE the target disk!'
-echo ''
-lsblk -d -o NAME,SIZE,MODEL 2>/dev/null | grep -v loop
-echo ''
-read -p 'Target disk (e.g. sda): ' D
-D="/dev/$D"
-[ -b "$D" ] || { echo "Invalid disk"; exit 1; }
-read -p 'Erase ALL data on '$D'? (yes/no): ' C
-[ "$C" = "yes" ] || { echo Cancelled; exit 0; }
-parted -s "$D" mklabel gpt
-parted -s "$D" mkpart primary fat32 1MiB 513MiB
-parted -s "$D" set 1 esp on
-parted -s "$D" mkpart primary ext4 513MiB 100%
-echo 'Formatting...'
-mkfs.fat -F32 "${D}1"
-mkfs.ext4 -F "${D}2"
-echo 'Mounting...'
-mount "${D}2" /mnt
-mkdir -p /mnt/boot/efi
-mount "${D}1" /mnt/boot/efi
-echo 'Copying system...'
-rsync -a --exclude=/proc --exclude=/sys --exclude=/dev --exclude=/run --exclude=/tmp --exclude=/mnt --exclude=/live --exclude=/cdrom / /mnt/
-for d in proc sys dev run tmp; do mkdir -p /mnt/$d; done
-echo 'Installing GRUB...'
-mount --bind /dev /mnt/dev
-mount --bind /proc /mnt/proc
-mount --bind /sys /mnt/sys
-chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=AegisOS --recheck
-chroot /mnt grub-install --target=i386-pc "$D" 2>/dev/null || true
-chroot /mnt update-grub
-echo aegisos > /mnt/etc/hostname
-chroot /mnt systemctl enable aegisosd guardian ssh ufw 2>/dev/null || true
-umount /mnt/boot/efi /mnt/dev /mnt/proc /mnt/sys /mnt 2>/dev/null || true
-echo 'Done! Remove media and reboot.'
-''', 0o755)
-W('/etc/systemd/system/aegisosd.service', '[Unit]\nDescription=AegisOS Agent Daemon\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=/usr/local/lib/aegisos/framework.py\nWorkingDirectory=/usr/local/lib/aegisos\nRestart=always\nRestartSec=10\nEnvironment=PYTHONUNBUFFERED=1\n\n[Install]\nWantedBy=multi-user.target\n')
-W('/etc/systemd/system/guardian.service', '[Unit]\nDescription=Aegis Guardian Monitor\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=/usr/local/lib/aegisos/guardian.py\nRestart=always\nRestartSec=30\nEnvironment=PYTHONUNBUFFERED=1\n\n[Install]\nWantedBy=multi-user.target\n')
-W('/etc/systemd/system/aegisos-installer.service', '[Unit]\nDescription=AegisOS Installer\nAfter=multi-user.target\nConflicts=rescue.service\n\n[Service]\nType=idle\nExecStart=/usr/local/bin/aegisos-install\nStandardInput=tty\nStandardOutput=tty\nTTYPath=/dev/tty1\n\n[Install]\nWantedBy=multi-user.target\n')
+with open(os.path.join(SCRIPT_DIR, 'aegisos-install.sh')) as installer:
+    W('/usr/local/bin/aegisos-install', installer.read(), 0o755)
+service_hardening = '''User=aegis
+Group=aegis
+SupplementaryGroups=adm systemd-journal
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/aegisos /var/log/aegisos /run/aegisos
+'''
+W('/etc/systemd/system/aegisosd.service', f'''[Unit]
+Description=AegisOS Agent Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/lib/aegisos/framework.py
+WorkingDirectory=/usr/local/lib/aegisos
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+{service_hardening}
+[Install]
+WantedBy=multi-user.target
+''')
+W('/etc/systemd/system/guardian.service', f'''[Unit]
+Description=Aegis Guardian Monitor
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/lib/aegisos/guardian.py
+WorkingDirectory=/usr/local/lib/aegisos
+Restart=always
+RestartSec=30
+Environment=PYTHONUNBUFFERED=1
+{service_hardening}
+[Install]
+WantedBy=multi-user.target
+''')
+W('/usr/lib/tmpfiles.d/aegisos.conf', '''d /run/aegisos 0750 aegis aegis -
+d /var/lib/aegisos 0750 aegis aegis -
+d /var/log/aegisos 0750 aegis aegis -
+''')
+W('/etc/systemd/system/aegisos-installer.service', '''[Unit]
+Description=AegisOS Installer
+After=live-config.service
+Wants=live-config.service
+Conflicts=getty@tty1.service serial-getty@ttyS0.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/aegisos-install
+StandardInput=tty-force
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/console
+''')
 wants = os.path.join(ROOTFS, 'etc/systemd/system/multi-user.target.wants')
 os.makedirs(wants, exist_ok=True)
 for svc in ['aegisosd.service', 'guardian.service']:

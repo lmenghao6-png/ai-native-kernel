@@ -10,7 +10,7 @@ Architecture:
 Standing orders (goals) are configured in /etc/aegisos/guardian.conf
 """
 
-import json, os, subprocess, sys, time, urllib.request, urllib.error
+import json, os, shlex, subprocess, sys, time, urllib.request, urllib.error
 from collections import deque
 from pathlib import Path
 
@@ -34,11 +34,9 @@ You receive a system state snapshot periodically. For each snapshot, you must:
    - SAFE_AUTO: take safe action automatically (reading files, checking services)
    - NEEDS_CONFIRM: important action that needs user approval
 
-Safe auto-actions:
+Safe auto-actions are read-only diagnostics:
 - Reading system state (ps, df, free, journalctl, systemctl status)
-- Restarting a crashed service
-- Cleaning temp files older than 7 days  
-- Updating package lists (apt update)
+- Listing files, devices, sockets, processes, and failed services
 
 Needs-confirm actions:
 - Installing/removing packages
@@ -307,33 +305,66 @@ def parse_action(response):
     }
 
 
+SAFE_COMMANDS = {
+    "cat", "date", "df", "dmesg", "du", "file", "free", "grep", "head",
+    "hostname", "id", "ip", "journalctl", "ls", "lsblk", "lscpu", "lspci",
+    "lsusb", "printenv", "ps", "pwd", "ss", "stat", "tail", "uname",
+    "uptime", "w", "wc", "whereis", "which", "who",
+}
+SAFE_SYSTEMCTL_ACTIONS = {
+    "is-active", "is-enabled", "list-unit-files", "list-units", "show", "status",
+}
+SHELL_META = frozenset(";&|><`$(){}[]\n\r")
+
+
+def safe_command_argv(cmd):
+    """Return argv for an allowed read-only command, otherwise None."""
+    if not isinstance(cmd, str) or not cmd.strip():
+        return None
+    if any(char in SHELL_META for char in cmd):
+        return None
+
+    try:
+        argv = shlex.split(cmd, posix=True)
+    except ValueError:
+        return None
+
+    if not argv or "/" in argv[0]:
+        return None
+
+    command = argv[0]
+    if command == "systemctl":
+        if len(argv) < 2 or argv[1] not in SAFE_SYSTEMCTL_ACTIONS:
+            return None
+    elif command not in SAFE_COMMANDS:
+        return None
+
+    return argv
+
+
 def is_safe_command(cmd):
-    """Check if a command is safe to auto-execute."""
-    cmd_name = cmd.strip().split()[0] if cmd.strip() else ""
-    safe_cmds = {
-        "ls", "cat", "df", "du", "ps", "free", "uname", "uptime",
-        "dmesg", "journalctl", "systemctl", "stat", "file", "which",
-        "whereis", "echo", "printenv", "id", "pwd", "date",
-        "lscpu", "lsblk", "lspci", "lsusb", "ip", "ss", "ping",
-        "head", "tail", "wc", "find", "grep", "who", "w", "hostname",
-    }
-    return cmd_name in safe_cmds
+    return safe_command_argv(cmd) is not None
 
 
 def execute_commands(commands, auto_execute_safe):
     """Execute commands, respecting safety settings."""
     results = []
     for cmd in commands:
-        safe = is_safe_command(cmd)
-        
-        if not safe and not auto_execute_safe:
-            log(f"SKIP (needs confirm): {cmd[:80]}")
-            results.append({"command": cmd, "executed": False, "reason": "needs_confirm"})
+        argv = safe_command_argv(cmd)
+
+        if argv is None:
+            log(f"SKIP (unsafe): {cmd[:80]}")
+            results.append({"command": cmd, "executed": False, "reason": "unsafe"})
             continue
-        
+
+        if not auto_execute_safe:
+            log(f"SKIP (automatic execution disabled): {cmd[:80]}")
+            results.append({"command": cmd, "executed": False, "reason": "auto_disabled"})
+            continue
+
         try:
             r = subprocess.run(
-                ["bash", "-c", cmd],
+                argv,
                 capture_output=True, text=True, timeout=30
             )
             status = "OK" if r.returncode == 0 else f"FAIL({r.returncode})"

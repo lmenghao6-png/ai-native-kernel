@@ -1,0 +1,83 @@
+#!/usr/bin/expect -f
+
+set timeout 150
+set iso "build/aegisos/image/aegisos-beta.iso"
+set ovmf "/usr/share/ovmf/OVMF.fd"
+set log_path "build/aegisos/iso-boot-test.log"
+
+if {![file exists $iso]} {
+    puts stderr "ISO not found: $iso"
+    exit 1
+}
+if {![file exists $ovmf]} {
+    puts stderr "OVMF not found: $ovmf"
+    exit 1
+}
+
+log_file -noappend $log_path
+spawn qemu-system-x86_64 -machine q35 -m 1G -no-reboot \
+    -nographic -serial mon:stdio \
+    -drive if=pflash,format=raw,readonly=on,file=$ovmf \
+    -cdrom $iso
+
+expect {
+    "aegisos login:" { send "root\r" }
+    timeout {
+        puts stderr "Timed out waiting for AegisOS login"
+        exit 1
+    }
+}
+
+expect {
+    "Password:" { send "aegisos\r" }
+    timeout {
+        puts stderr "Timed out waiting for password prompt"
+        exit 1
+    }
+}
+
+expect {
+    -re {root@aegisos:.*# } {}
+    timeout {
+        puts stderr "Timed out waiting for root shell"
+        exit 1
+    }
+}
+
+send "systemctl is-active --quiet aegisosd guardian ssh && echo AEGISOS_SERVICES_OK\r"
+expect {
+    "AEGISOS_SERVICES_OK" {}
+    timeout {
+        puts stderr "Required services are not active"
+        exit 1
+    }
+}
+
+send "test \"\$(systemctl show -p User --value aegisosd)\" = aegis && test \"\$(systemctl show -p User --value guardian)\" = aegis && echo AEGISOS_UNPRIVILEGED_OK\r"
+expect {
+    "AEGISOS_UNPRIVILEGED_OK" {}
+    timeout {
+        puts stderr "Agent services are not running as aegis"
+        exit 1
+    }
+}
+
+send "test -z \"\$(systemctl --failed --no-legend --plain)\" && echo AEGISOS_NO_FAILED_UNITS\r"
+expect {
+    "AEGISOS_NO_FAILED_UNITS" {}
+    timeout {
+        puts stderr "AegisOS has failed systemd units"
+        exit 1
+    }
+}
+
+send "poweroff\r"
+expect {
+    eof {}
+    timeout {
+        puts stderr "Timed out waiting for QEMU shutdown"
+        exit 1
+    }
+}
+
+puts "AegisOS ISO boot test passed"

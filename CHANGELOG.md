@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- QEMU integration test that executes a Ring 3 ELF program and verifies exit
+- Python tests for Guardian command policy, Agent action policy, and service hardening
+- Unprivileged `aegis` service account with systemd sandboxing
+- Automated ISO installation and reboot test using a disposable QEMU disk
+
+### Changed
+- Bastion now consumes real Limine memory map and HHDM responses
+- Initramfs now parses CPIO `newc` archives and constructs the VFS tree
+- ELF loader now validates and maps x86-64 `PT_LOAD` segments
+- Agent and Guardian unattended execution is restricted to read-only diagnostics
+- Disk installer now writes UUID-based mounts, supports UEFI fallback and
+  BIOS/GPT boot, creates unique SSH host keys, and cleans up failed installs
+
+### Fixed
+- PMM free-page bitmap initialization and VMM CR3 allocation
+- Limine request IDs and request markers
+- GDT/TSS setup, IDT syscall vector mapping, and interrupt-frame register layout
+- User-mode hello program pointer and length handling
+
 ## v0.3-beta (2026-06-05)
 
 ### Added

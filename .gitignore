@@ -1,4 +1,5 @@
 build/
+third_party/
 *.iso
 *.raw
 *.tar
@@ -6,4 +7,3 @@ build/
 *.gguf
 __pycache__/
 *.pyc
-

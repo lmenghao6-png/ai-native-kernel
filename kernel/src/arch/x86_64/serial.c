@@ -7,7 +7,11 @@ void serial_init(void) {
 }
 static int serial_is_transmit_empty(void) { return inb(COM1 + 5) & 0x20; }
 static int serial_received(void) { return inb(COM1 + 5) & 1; }
-void serial_write_char(char ch) { while (!serial_is_transmit_empty()); outb(COM1, ch); }
+void serial_write_char(char ch) {
+    while (!serial_is_transmit_empty()) {
+    }
+    outb(COM1, ch);
+}
 void serial_write(const char *text) { while (*text) serial_write_char(*text++); }
 void serial_write_hex_u64(uint64_t value) {
     serial_write("0x");

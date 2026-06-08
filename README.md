@@ -30,10 +30,10 @@ AegisOS combines a standard Debian bookworm base with a self-hosted AI runtime t
 │  Guardian Daemon (proactive AI monitor)      │
 ├─────────────────────────────────────────────┤
 │  Bastion Kernel (custom x86_64, research)    │
-│  ├── VFS + initramfs + ELF loader            │
-│  ├── PMM/VMM + kheap                         │
-│  ├── Scheduler (cooperative + preemptive)    │
-│  └── Syscall ABI                             │
+│  ├── VFS + CPIO initramfs + ELF64 loader     │
+│  ├── PMM/VMM + kheap + TSS                   │
+│  ├── Ring 3 process bootstrap                │
+│  └── Minimal syscall ABI                     │
 ├─────────────────────────────────────────────┤
 │  Debian bookworm base + Linux kernel         │
 └─────────────────────────────────────────────┘
@@ -44,15 +44,15 @@ AegisOS combines a standard Debian bookworm base with a self-hosted AI runtime t
 ### AI Agent Framework
 - **8 self-registering plugins**: 5 sensors (disk, process, memory, logs, network) + 3 actors (bash, systemd, apt)
 - **LLM Planner**: supports any OpenAI-compatible API (DeepSeek, OpenAI, Ollama, Claude) — configured in `/etc/aegisos/ai-agent.conf`
-- **Local fallback**: built-in Qwen2.5-0.5B GGUF model runs fully offline when cloud API is unavailable
+- **Local fallback**: supports offline GGUF inference when `llama-cli` and a compatible model are installed
 - **Agent Memory**: SQLite-backed persistent context storage with observation/action/goal tracking
 - **Goal system**: define long-term objectives the agent works toward autonomously
 
 ### Guardian Daemon
 - Proactive system monitoring every 60 seconds
-- 4-level autonomous action: IGNORE → SUGGEST → SAFE_AUTO → NEEDS_CONFIRM
+- 4-level decision output: IGNORE → SUGGEST → SAFE_AUTO → NEEDS_CONFIRM
 - Automatic health checks: CPU, memory, disk, SSH attacks, service failures
-- Safe auto-actions: restart crashed services, clean temp files, update packages
+- Parameterized, read-only unattended diagnostics; mutations require approval
 - Structured decision output with reasoning
 
 ### System Management
@@ -67,7 +67,8 @@ AegisOS combines a standard Debian bookworm base with a self-hosted AI runtime t
 - Initramfs CPIO newc format parser
 - ELF64 program loader with BSS zeroing
 - GDT, IDT, PMM, VMM, kernel heap, TSS
-- Ring3 cooperative + preemptive scheduler
+- Ring 3 ELF process bootstrap with serial write and exit syscalls
+- Scheduler interfaces are present; multitasking and preemption remain in development
 
 ## Quick Start
 
@@ -112,25 +113,22 @@ ai-console "What is the current disk usage?"
 ### Full ISO Build
 ```bash
 # Install build dependencies
-sudo apt-get install -y mmdebstrap squashfs-tools grub-pc-bin \
-    grub-efi-amd64-bin xorriso parted dosfstools rsync wget \
+sudo apt-get install -y debian-archive-keyring mmdebstrap squashfs-tools grub-pc-bin \
+    grub-efi-amd64-bin xorriso mtools parted dosfstools rsync \
     clang lld make git cpio
 
-# Build rootfs
-sudo bash tools/build-aegisos-rootfs.sh
+# Build rootfs + squashfs + bootable ISO
+make aegisos-image
 
-# Download local AI model (optional)
-mkdir -p build/aegisos/linux-rootfs/usr/local/share/aegisos/models
-wget -O build/aegisos/linux-rootfs/usr/local/share/aegisos/models/qwen2.5-0.5b-q4_k_m.gguf \
-    https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf
+# Output
+ls -lh build/aegisos/image/aegisos-beta.iso
 
-# Build squashfs + ISO
-mksquashfs build/aegisos/linux-rootfs build/aegisos/aegisos-root.squashfs -comp xz -b 256K -noappend
-mkdir -p build/aegisos/iso/boot/grub build/aegisos/iso/live build/aegisos/image
-cp build/aegisos/linux-rootfs/boot/vmlinuz-* build/aegisos/iso/boot/vmlinuz
-cp build/aegisos/linux-rootfs/boot/initrd.img-* build/aegisos/iso/boot/initrd.img
-cp build/aegisos/aegisos-root.squashfs build/aegisos/iso/live/filesystem.squashfs
-grub-mkrescue -o build/aegisos/image/aegisos-beta.iso build/aegisos/iso -- -volid AEGISOS
+# Optional local AI backend: add these to the rootfs, then rebuild the image
+sudo install -Dm755 /path/to/llama-cli \
+    build/aegisos/linux-rootfs/usr/local/libexec/aegisos/llama-cli
+sudo install -Dm644 /path/to/model.gguf \
+    build/aegisos/linux-rootfs/usr/local/share/aegisos/models/qwen2.5-0.5b-q4_k_m.gguf
+bash tools/build-aegisos-image.sh
 ```
 
 ### Bastion Kernel Only
@@ -141,7 +139,8 @@ make all -j$(nproc)
 # Test with QEMU
 make fat
 qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -m 256M \
-    -nographic -serial mon:stdio -drive file=fat:rw:build/fatroot
+    -nographic -serial mon:stdio \
+    -drive format=raw,file=fat:rw:build/fatroot
 ```
 
 ## Configuration
@@ -171,19 +170,20 @@ goals = Keep the system secure and stable. Monitor disk space, memory, and servi
 ## CI/CD
 
 GitHub Actions automatically:
-1. **Build** the Bastion kernel + run QEMU boot test on every push
-2. **Build** the full AegisOS ISO distribution
-3. **Test** ISO boot in QEMU
-4. **Release** when a version tag (`v*`) is pushed
+1. **Test** Python policy code and build the Bastion kernel
+2. **Boot** Bastion in QEMU and verify a Ring 3 program runs and exits
+3. **Build** the full AegisOS ISO distribution
+4. **Log in** to the ISO in QEMU and verify hardened services
+5. **Release** when a version tag (`v*`) is pushed
 
 ## Project Status
 
 | Component | Version | Status |
 |-----------|---------|--------|
-| AegisOS Distribution | 0.3-beta | Active |
-| Agent Framework | 0.3-beta | Active |
-| Guardian Daemon | 0.3-beta | Active |
-| Bastion Kernel | 0.3-beta | Research |
+| AegisOS Distribution | 0.3-dev | Bootable integration |
+| Agent Framework | 0.3-dev | Policy-restricted prototype |
+| Guardian Daemon | 0.3-dev | Read-only autonomous prototype |
+| Bastion Kernel | 0.3-dev | Single-process research kernel |
 
 ## License
 

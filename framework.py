@@ -330,6 +330,19 @@ OR if nothing to do:
 
 # ─── Runtime ──────────────────────────────────────────
 
+AUTONOMOUS_ACTION_ALLOWLIST = frozenset({
+    ("bash", "check_command_exists"),
+    ("systemd", "service_status"),
+    ("systemd", "list_failed"),
+    ("apt", "list_upgradable"),
+})
+
+
+def autonomous_action_allowed(actor_name: str, action_name: str) -> bool:
+    """Return whether an unattended daemon may execute this action."""
+    return (actor_name, action_name) in AUTONOMOUS_ACTION_ALLOWLIST
+
+
 class AgentRuntime:
     def __init__(self, planner: Planner = None, memory: AgentMemory = None):
         self.planner = planner or LLMPlanner()
@@ -370,6 +383,16 @@ class AgentRuntime:
             return
         
         params = decision.get("params", {})
+        if not autonomous_action_allowed(actor_name, action_name):
+            result = {
+                "success": False,
+                "denied": True,
+                "error": "action requires explicit user approval",
+            }
+            self.memory.record_action(actor_name, action_name, params, result)
+            print(f"[agent] denied unattended action {actor_name}.{action_name}")
+            return result
+
         try:
             result = actor.execute(action_name, params)
             self.memory.record_action(actor_name, action_name, params, result)
@@ -400,3 +423,36 @@ class AgentRuntime:
         t = threading.Thread(target=self.run_forever, args=(tick_interval,), daemon=True)
         t.start()
         return t
+
+
+def _load_tick_interval(default: float = 10.0) -> float:
+    for path in ["/etc/aegisos/ai-agent.conf", os.path.expanduser("~/.config/aegisos/ai-agent.conf")]:
+        try:
+            with open(path) as f:
+                section = None
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or line.startswith(";"):
+                        continue
+                    if line.startswith("[") and line.endswith("]"):
+                        section = line[1:-1]
+                        continue
+                    if "=" in line and section == "agent":
+                        key, value = line.split("=", 1)
+                        if key.strip() == "tick_interval":
+                            return float(value.strip())
+        except (FileNotFoundError, PermissionError, ValueError):
+            continue
+    return default
+
+
+def main():
+    sys.modules.setdefault("framework", sys.modules[__name__])
+    import plugins  # noqa: F401 - imported for plugin self-registration
+
+    runtime = AgentRuntime()
+    runtime.run_forever(_load_tick_interval())
+
+
+if __name__ == "__main__":
+    main()

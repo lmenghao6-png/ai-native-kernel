@@ -13,38 +13,67 @@
 #include "kernel/vfs.h"
 #include "kernel/initramfs.h"
 #include "kernel/elf.h"
+#include "limine.h"
 
 __attribute__((used, section(".limine_requests")))
-static volatile struct { uint64_t id[4]; uint64_t revision; void *response; } memmap_req = {
-    {0x67cf3d9d378a806f, 0xe8ac855b2a6e8e11, 0, 0}, 0, 0
+static volatile uint64_t base_revision[] = LIMINE_BASE_REVISION(3);
+
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_memmap_request memmap_req = {
+    .id = LIMINE_MEMMAP_REQUEST_ID,
+    .revision = 0,
+    .response = 0,
 };
 
 __attribute__((used, section(".limine_requests")))
-static volatile struct { uint64_t id[4]; uint64_t revision; void *response; } hhdm_req = {
-    {0x48dcf1cb8ad2b852, 0x63984e959a98244b, 0, 0}, 0, 0
+static volatile struct limine_hhdm_request hhdm_req = {
+    .id = LIMINE_HHDM_REQUEST_ID,
+    .revision = 0,
+    .response = 0,
 };
 
 __attribute__((used, section(".limine_requests_start")))
-static volatile uint64_t req_start[4] = {0,0,0,0};
+static volatile uint64_t req_start[] = LIMINE_REQUESTS_START_MARKER;
 
 __attribute__((used, section(".limine_requests_end")))
-static volatile uint64_t req_end[4] = {0,0,0,0};
+static volatile uint64_t req_end[] = LIMINE_REQUESTS_END_MARKER;
 
 extern uint8_t _initramfs_start[], _initramfs_end[];
 
 void kmain(void) {
     serial_init();
     serial_write("\n=== Bastion Kernel v0.3 ===\n\n");
+
+    if (!LIMINE_BASE_REVISION_SUPPORTED(base_revision)) {
+        serial_write("[boot] unsupported Limine base revision\n");
+        for (;;) __asm__ volatile("hlt");
+    }
+    if (!memmap_req.response || !hhdm_req.response) {
+        serial_write("[boot] missing required Limine responses\n");
+        for (;;) __asm__ volatile("hlt");
+    }
+
     gdt_init(); idt_init(); interrupt_init();
-    pmm_init(&memmap_req);
-    vmm_init(0xffff800000000000ULL);
+    if (!pmm_init(memmap_req.response)) {
+        for (;;) __asm__ volatile("hlt");
+    }
+    if (!vmm_init(hhdm_req.response->offset)) {
+        for (;;) __asm__ volatile("hlt");
+    }
     kheap_init(); uaccess_init(); gdt_load_tss();
     scheduler_init(50); task_init(0);
     vfs_init();
     size_t isz = (size_t)(_initramfs_end - _initramfs_start);
-    if (isz > 0 && isz < 33554432) { initramfs_load(_initramfs_start, isz); initramfs_dump(); }
+    if (isz > 0 && isz < 33554432 && initramfs_load(_initramfs_start, isz)) {
+        initramfs_dump();
+    }
     else { serial_write("[initramfs] no archive\n"); }
     uint64_t entry = 0;
-    if (elf_load("/bin/hello", &entry) == 0) { serial_write("[kmain] ELF ready\n"); }
+    if (elf_load("/bin/hello", &entry) == 0 && entry != 0) {
+        serial_write("[kmain] ELF ready\n");
+        if (task_prepare_ring3_demo(entry)) {
+            task_enter_prepared();
+        }
+    }
     serial_write("\nbastion> "); debug_shell_run_forever();
 }
