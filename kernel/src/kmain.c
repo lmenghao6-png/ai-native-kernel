@@ -14,12 +14,21 @@
 #include "kernel/initramfs.h"
 #include "kernel/elf.h"
 
-static volatile int limine_base_rev = 3;
-__attribute__((used, section(".limine_requests"))) static volatile int limine_memmap_id = 0;
-__attribute__((used, section(".limine_requests"))) static volatile int limine_hhdm_id = 1;
-__attribute__((used, section(".limine_requests"))) static volatile int limine_kernel_id = 2;
-__attribute__((used, section(".limine_requests_start"))) static volatile int limine_start = 0;
-__attribute__((used, section(".limine_requests_end"))) static volatile int limine_end = 0;
+__attribute__((used, section(".limine_requests")))
+static volatile struct { uint64_t id[4]; uint64_t revision; void *response; } memmap_req = {
+    {0x67cf3d9d378a806f, 0xe8ac855b2a6e8e11, 0, 0}, 0, 0
+};
+
+__attribute__((used, section(".limine_requests")))
+static volatile struct { uint64_t id[4]; uint64_t revision; void *response; } hhdm_req = {
+    {0x48dcf1cb8ad2b852, 0x63984e959a98244b, 0, 0}, 0, 0
+};
+
+__attribute__((used, section(".limine_requests_start")))
+static volatile uint64_t req_start[4] = {0,0,0,0};
+
+__attribute__((used, section(".limine_requests_end")))
+static volatile uint64_t req_end[4] = {0,0,0,0};
 
 extern uint8_t _initramfs_start[], _initramfs_end[];
 
@@ -27,7 +36,7 @@ void kmain(void) {
     serial_init();
     serial_write("\n=== Bastion Kernel v0.3 ===\n\n");
     gdt_init(); idt_init(); interrupt_init();
-    serial_write("[pmm] ready\n");
+    pmm_init(&memmap_req);
     vmm_init(0xffff800000000000ULL);
     kheap_init(); uaccess_init(); gdt_load_tss();
     scheduler_init(50); task_init(0);
