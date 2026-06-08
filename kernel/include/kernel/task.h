@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include "kernel/interrupt.h"
 enum task_state { TASK_EMPTY, TASK_READY, TASK_RUNNING, TASK_PREEMPTED, TASK_BLOCKED, TASK_EXITED, TASK_FAILED };
 struct task_context { uint64_t r15,r14,r13,r12,r11,r10,r9,r8,rbp,rdi,rsi,rdx,rcx,rbx,rax,rip,cs,rflags,rsp,ss,cr3; };
 struct task { uint64_t id; enum task_state state; uint32_t priority; char name[32]; struct task_context ctx; };
