@@ -16,7 +16,7 @@ jobs:
     name: Build Bastion Kernel
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Validate release version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -43,7 +43,7 @@ jobs:
           bash tools/test-bastion-boot.sh
 
       - name: Upload kernel artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bastion-kernel
           path: |
@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-24.04
     needs: build-bastion
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install dependencies
         run: |
@@ -82,7 +82,7 @@ jobs:
         run: expect tools/test-aegisos-install.exp
 
       - name: Upload ISO artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: aegisos-developer-preview-iso
           path: |
@@ -98,13 +98,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: aegisos-developer-preview-iso
           path: release
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             release/image/aegisos-*.iso

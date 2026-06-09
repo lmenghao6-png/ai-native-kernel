@@ -15,6 +15,7 @@
 ### Changed
 - Live images use a removable `aegis-live` account; installed systems remove it
 - ISO build output directories are created safely across root/non-root stages
+- GitHub Actions use Node.js 24-compatible action releases
 - Bastion now consumes real Limine memory map and HHDM responses
 - Initramfs now parses CPIO `newc` archives and constructs the VFS tree
 - ELF loader now validates and maps x86-64 `PT_LOAD` segments
