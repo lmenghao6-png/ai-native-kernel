@@ -57,7 +57,13 @@ void kmain(void) {
     if (!pmm_init(memmap_req.response)) {
         for (;;) __asm__ volatile("hlt");
     }
+    if (!pmm_self_test()) {
+        for (;;) __asm__ volatile("hlt");
+    }
     if (!vmm_init(hhdm_req.response->offset)) {
+        for (;;) __asm__ volatile("hlt");
+    }
+    if (!vmm_self_test()) {
         for (;;) __asm__ volatile("hlt");
     }
     kheap_init(); uaccess_init(); gdt_load_tss();

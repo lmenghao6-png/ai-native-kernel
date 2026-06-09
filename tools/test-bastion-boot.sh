@@ -11,7 +11,7 @@ test -f "$OVMF"
 test -d "$FAT_DIR"
 
 set +e
-timeout 20 qemu-system-x86_64 -machine pc,graphics=off \
+timeout 30 qemu-system-x86_64 -machine pc,graphics=off \
     -bios "$OVMF" -m 256M -no-reboot \
     -nographic -serial mon:stdio \
     -drive format=raw,file=fat:rw:"$FAT_DIR" >"$BOOT_LOG" 2>&1
@@ -20,7 +20,9 @@ set -e
 
 test "$qemu_status" -eq 0 -o "$qemu_status" -eq 124
 grep -q "\[pmm\] usable pages:" "$BOOT_LOG"
+grep -q "\[pmm\] self-test passed" "$BOOT_LOG"
 grep -q "\[vmm\] init done" "$BOOT_LOG"
+grep -q "\[vmm\] rollback self-test passed" "$BOOT_LOG"
 grep -q "\[vfs\] initialized" "$BOOT_LOG"
 grep -q "\[initramfs\] mounted 2 entries" "$BOOT_LOG"
 grep -q "\[FILE\] hello" "$BOOT_LOG"

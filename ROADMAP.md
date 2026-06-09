@@ -9,13 +9,13 @@ release until its required tests pass from a clean checkout.
 - Agent and Guardian services run as the unprivileged `aegis` user
 - Unattended AI actions are restricted to read-only diagnostics
 - Bastion consumes the Limine memory map and creates its own page tables
+- Physical pages can be released and reused; failed VMM mappings roll back
 - CPIO initramfs parsing, VFS construction, and ELF64 segment loading
 - Ring 3 process entry, serial write syscall, and process exit syscall
 - Python policy tests and QEMU kernel boot integration test
 
 ## 0.3 Alpha
 
-- Physical page free/reuse support and allocation failure rollback
 - Per-process address spaces and page permission enforcement
 - Kernel file descriptors with open/read/write syscalls
 - Cooperative scheduler with two isolated user tasks

@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Physical page release/reuse with PMM and VMM boot-time self-tests
+- Transactional VMM page mapping with data-page and page-table rollback
 - QEMU integration test that executes a Ring 3 ELF program and verifies exit
 - Python tests for Guardian command policy, Agent action policy, and service hardening
 - Unprivileged `aegis` service account with systemd sandboxing
@@ -17,6 +19,7 @@
   BIOS/GPT boot, creates unique SSH host keys, and cleans up failed installs
 
 ### Fixed
+- Failed user-page allocations no longer leak pages or advance the virtual address cursor
 - PMM free-page bitmap initialization and VMM CR3 allocation
 - Limine request IDs and request markers
 - GDT/TSS setup, IDT syscall vector mapping, and interrupt-frame register layout
