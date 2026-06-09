@@ -175,6 +175,19 @@ class InstallAgentsTests(unittest.TestCase):
                     self.assertIn("Rootfs not found:", result.stderr)
                     self.assertNotIn("Invalid AegisOS version:", result.stderr)
 
+    def test_image_builder_makes_build_outputs_writable(self):
+        with open("tools/build-aegisos-image.sh") as handle:
+            builder = handle.read()
+        self.assertIn(
+            '${SUDO[@]} chown "$(id -u):$(id -g)" "$BUILD_DIR"',
+            builder,
+        )
+        self.assertIn(
+            '${SUDO[@]} chown -R "$(id -u):$(id -g)" '
+            '"$ISO_DIR" "$IMAGE_DIR"',
+            builder,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

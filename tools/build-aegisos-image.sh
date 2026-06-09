@@ -47,6 +47,7 @@ need_cmd mformat
 ${SUDO[@]} rm -rf "$ISO_DIR"
 ${SUDO[@]} rm -f "$SQUASHFS" "$ISO"
 ${SUDO[@]} mkdir -p "$ISO_DIR/boot/grub" "$ISO_DIR/live" "$IMAGE_DIR"
+${SUDO[@]} chown "$(id -u):$(id -g)" "$BUILD_DIR"
 ${SUDO[@]} chown -R "$(id -u):$(id -g)" "$ISO_DIR" "$IMAGE_DIR"
 
 kernel_image="$(find "$ROOTFS/boot" -maxdepth 1 -type f -name 'vmlinuz-*' | sort | tail -n 1)"
