@@ -4,6 +4,8 @@ set -euo pipefail
 
 MOUNT_ROOT="${AEGISOS_MOUNT_ROOT:-/mnt/aegisos-target}"
 TARGET_DISK=""
+ADMIN_USER=""
+ADMIN_PASSWORD=""
 
 partition_path() {
     local disk="$1"
@@ -69,6 +71,83 @@ validate_disk() {
         echo "Target disk has mounted filesystems: $mounted" >&2
         return 1
     }
+}
+
+validate_admin_username() {
+    local username="$1"
+
+    [[ "$username" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || {
+        echo "Administrator username must use lowercase letters, digits, _ or -." >&2
+        return 1
+    }
+    case "$username" in
+        root|aegis|aegis-live)
+            echo "Reserved administrator username: $username" >&2
+            return 1
+            ;;
+    esac
+}
+
+validate_admin_password() {
+    local password="$1"
+
+    [[ ${#password} -ge 12 ]] || {
+        echo "Administrator password must be at least 12 characters." >&2
+        return 1
+    }
+    [[ "$password" != *:* &&
+       "$password" != *$'\n'* &&
+       "$password" != *$'\r'* ]] || {
+        echo "Administrator password contains unsupported characters." >&2
+        return 1
+    }
+}
+
+read_admin_credentials() {
+    local confirmation
+
+    if [[ -n "${AEGISOS_ADMIN_USER:-}" ||
+          -n "${AEGISOS_ADMIN_PASSWORD:-}" ]]; then
+        [[ -n "${AEGISOS_ADMIN_USER:-}" &&
+           -n "${AEGISOS_ADMIN_PASSWORD:-}" ]] || {
+            echo "Set both AEGISOS_ADMIN_USER and AEGISOS_ADMIN_PASSWORD." >&2
+            return 1
+        }
+        ADMIN_USER="$AEGISOS_ADMIN_USER"
+        ADMIN_PASSWORD="$AEGISOS_ADMIN_PASSWORD"
+    else
+        read -r -p "Administrator username: " ADMIN_USER
+        read -r -s -p "Administrator password: " ADMIN_PASSWORD
+        echo
+        read -r -s -p "Confirm administrator password: " confirmation
+        echo
+        [[ "$ADMIN_PASSWORD" == "$confirmation" ]] || {
+            echo "Administrator passwords do not match." >&2
+            return 1
+        }
+    fi
+
+    validate_admin_username "$ADMIN_USER"
+    validate_admin_password "$ADMIN_PASSWORD"
+}
+
+configure_target_accounts() {
+    if chroot "$MOUNT_ROOT" getent passwd "$ADMIN_USER" >/dev/null; then
+        echo "Administrator account already exists: $ADMIN_USER" >&2
+        return 1
+    fi
+
+    if chroot "$MOUNT_ROOT" getent passwd aegis-live >/dev/null; then
+        chroot "$MOUNT_ROOT" userdel --remove aegis-live
+    fi
+    rm -f "$MOUNT_ROOT/etc/sudoers.d/aegis-live"
+    sed -i '/^[[:space:]]*Live login:/d' "$MOUNT_ROOT/etc/motd"
+
+    chroot "$MOUNT_ROOT" useradd --create-home --shell /bin/bash \
+        --groups sudo "$ADMIN_USER"
+    printf '%s:%s\n' "$ADMIN_USER" "$ADMIN_PASSWORD" |
+        chroot "$MOUNT_ROOT" chpasswd
+    chroot "$MOUNT_ROOT" passwd --lock root
 }
 
 write_fstab() {
@@ -159,6 +238,7 @@ install_system() {
     write_fstab "$efi_partition" "$root_partition"
     echo aegisos > "$MOUNT_ROOT/etc/hostname"
     write_grub_defaults
+    configure_target_accounts
 
     mount --rbind /dev "$MOUNT_ROOT/dev"
     mount --make-rslave "$MOUNT_ROOT/dev"
@@ -204,6 +284,14 @@ main() {
         partition_path "$2" "$3"
         exit 0
     fi
+    if [[ "${1:-}" == "--validate-admin-username" ]]; then
+        [[ $# -eq 2 ]] || {
+            echo "Usage: $0 --validate-admin-username USERNAME" >&2
+            exit 2
+        }
+        validate_admin_username "$2"
+        exit 0
+    fi
 
     [[ "$(id -u)" -eq 0 ]] || {
         echo "The installer must run as root." >&2
@@ -241,9 +329,11 @@ main() {
         }
     fi
 
+    read_admin_credentials
     install_system "$TARGET_DISK"
+    ADMIN_PASSWORD=""
     trap - EXIT INT TERM
-    echo "AegisOS installation completed successfully."
+    echo "AegisOS installation completed successfully for $ADMIN_USER."
 
     if [[ "${AEGISOS_INSTALL_POWEROFF:-}" == "yes" ]]; then
         answer="yes"

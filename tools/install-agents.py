@@ -4,6 +4,9 @@ import sys
 
 ROOTFS = sys.argv[1] if len(sys.argv) > 1 else 'build/aegisos/linux-rootfs'
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_DIR = os.path.dirname(SCRIPT_DIR)
+with open(os.path.join(REPO_DIR, 'VERSION')) as version_file:
+    VERSION = version_file.read().strip()
 
 def W(p, c, m=0o644):
     f = os.path.join(ROOTFS, p.lstrip('/'))
@@ -15,7 +18,7 @@ print('Installing AegisOS CLI tools and services...')
 W('/usr/local/bin/aegisctl', '''#!/bin/bash
 case "${1:-}" in
     status)
-        echo "AegisOS 0.3-beta | Kernel $(uname -r)"
+        echo "AegisOS @VERSION@ | Kernel $(uname -r)"
         systemctl is-active aegisosd 2>/dev/null && echo "aegisosd: running" || echo "aegisosd: stopped"
         systemctl is-active guardian 2>/dev/null && echo "guardian: running" || echo "guardian: stopped"
         ;;
@@ -30,7 +33,7 @@ case "${1:-}" in
     update) sudo apt update && sudo apt upgrade -y ;;
     *) echo "Usage: aegisctl {status|doctor|logs|update}" ;;
 esac
-''', 0o755)
+'''.replace('@VERSION@', VERSION), 0o755)
 W('/usr/local/bin/ai-console', '''#!/usr/bin/env python3
 import json, os, subprocess, sys
 CONFIG='/etc/aegisos/ai-agent.conf'
@@ -45,7 +48,7 @@ def key():
 def cloud(p):
     import urllib.request
     b = json.dumps({'model':'deepseek-chat','messages':[{'role':'user','content':p}],'temperature':0.7,'max_tokens':1024}).encode()
-    r = urllib.request.Request('https://api.deepseek.com/v1/chat/completions',data=b,headers={'Content-Type':'application/json','Authorization':f'Bearer {key()}'},method='POST')
+    r = urllib.request.Request('https://api.deepseek.com/v1/chat/completions',data=b,headers={'Content-Type':'application/json','Authorization':'Bearer '+key()},method='POST')
     return json.loads(urllib.request.urlopen(r,timeout=60).read())['choices'][0]['message']['content']
 def local(p):
     m = '<|im_start|>user\\n'+p+'<|im_end|>\\n<|im_start|>assistant\\n'
@@ -56,9 +59,9 @@ if len(sys.argv)>1:
         if key(): print(cloud(p))
         elif os.path.exists(MODEL): print(local(p))
         else: print('No AI backend. Configure API key.')
-    except Exception as e: print(f'Error: {e}')
+    except Exception as e: print('Error: '+str(e))
 else:
-    print('AegisOS AI Console v0.3-beta')
+    print('AegisOS AI Console @VERSION@')
     while True:
         try: c=input('aegis> ').strip()
         except (EOFError,KeyboardInterrupt): break
@@ -68,8 +71,8 @@ else:
             if key(): print(cloud(c))
             elif os.path.exists(MODEL): print(local(c))
             else: print('No AI configured.')
-        except Exception as e: print(f'Error: {e}')
-''', 0o755)
+        except Exception as e: print('Error: '+str(e))
+'''.replace('@VERSION@', VERSION), 0o755)
 with open(os.path.join(SCRIPT_DIR, 'aegisos-install.sh')) as installer:
     W('/usr/local/bin/aegisos-install', installer.read(), 0o755)
 service_hardening = '''User=aegis

@@ -7,6 +7,17 @@ set -euo pipefail
 
 ROOTFS="build/aegisos/linux-rootfs"
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+VERSION_FILE="$REPO_DIR/VERSION"
+
+if [ ! -f "$VERSION_FILE" ]; then
+    echo "Version file not found: $VERSION_FILE" >&2
+    exit 1
+fi
+AEGISOS_VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
+if [[ ! "$AEGISOS_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-z0-9]+([.-][a-z0-9]+)*)?$ ]]; then
+    echo "Invalid AegisOS version: $AEGISOS_VERSION" >&2
+    exit 1
+fi
 
 echo "=== AegisOS Rootfs Builder ==="
 echo "Target: $ROOTFS"
@@ -61,6 +72,14 @@ sudo chroot "$ROOTFS" chown -R aegis:aegis \
     /var/lib/aegisos /var/log/aegisos /run/aegisos
 sudo chroot "$ROOTFS" chmod 0750 \
     /var/lib/aegisos /var/log/aegisos /run/aegisos
+sudo chroot "$ROOTFS" useradd --create-home --shell /bin/bash \
+    --groups sudo aegis-live
+echo "aegis-live:aegisos" | sudo chroot "$ROOTFS" chpasswd
+sudo chroot "$ROOTFS" passwd --lock root
+sudo tee "$ROOTFS/etc/sudoers.d/aegis-live" > /dev/null <<'EOF'
+aegis-live ALL=(ALL:ALL) NOPASSWD: ALL
+EOF
+sudo chmod 440 "$ROOTFS/etc/sudoers.d/aegis-live"
 
 # Stage 3: Copy agent framework
 echo "[3/5] Installing AegisOS Agent Framework..."
@@ -93,8 +112,25 @@ interval = 60
 auto_execute_safe = true
 goals = Keep the system secure and stable. Monitor disk space, memory, and service health.
 CONFEOF
+echo "$AEGISOS_VERSION" | sudo tee "$ROOTFS/etc/aegisos/version" > /dev/null
 sudo chroot "$ROOTFS" chown root:aegis /etc/aegisos/ai-agent.conf
 sudo chmod 640 "$ROOTFS/etc/aegisos/ai-agent.conf"
+sudo chmod 644 "$ROOTFS/etc/aegisos/version"
+
+sudo rm -f "$ROOTFS/etc/os-release"
+sudo tee "$ROOTFS/etc/os-release" > /dev/null <<EOF
+PRETTY_NAME="AegisOS $AEGISOS_VERSION"
+NAME="AegisOS"
+VERSION_ID="$AEGISOS_VERSION"
+VERSION="$AEGISOS_VERSION (Developer Preview)"
+VERSION_CODENAME=bookworm
+ID=aegisos
+ID_LIKE=debian
+HOME_URL="https://github.com/lmenghao6-png/ai-native-kernel"
+SUPPORT_URL="https://github.com/lmenghao6-png/ai-native-kernel/issues"
+BUG_REPORT_URL="https://github.com/lmenghao6-png/ai-native-kernel/issues"
+EOF
+sudo chmod 644 "$ROOTFS/etc/os-release"
 
 sudo tee "$ROOTFS/etc/network/interfaces" > /dev/null << 'EOF'
 auto lo
@@ -103,8 +139,6 @@ EOF
 sudo chmod 755 "$ROOTFS/etc/network"
 sudo chmod 644 "$ROOTFS/etc/network/interfaces"
 
-# Set root password (for live system convenience)
-echo "root:aegisos" | sudo chroot "$ROOTFS" chpasswd 2>/dev/null || true
 echo "aegisos" | sudo tee "$ROOTFS/etc/hostname" > /dev/null
 sudo chmod 644 "$ROOTFS/etc/hostname"
 
@@ -126,11 +160,18 @@ sudo tee "$ROOTFS/etc/motd" > /dev/null << 'MOTDEOF'
          __/ |
         |___/
 
-   AI-Native Operating System v0.3-beta
+   AI-Native Operating System @AEGISOS_VERSION@
 
    Type 'ai-console' for natural language interface.
    Type 'aegisctl status' for system overview.
+   Live login: aegis-live / aegisos
 MOTDEOF
+sudo sed -i "s/@AEGISOS_VERSION@/$AEGISOS_VERSION/g" "$ROOTFS/etc/motd"
+
+printf 'AegisOS %s \\n \\l\n\n' "$AEGISOS_VERSION" | \
+    sudo tee "$ROOTFS/etc/issue" > /dev/null
+printf 'AegisOS %s\n' "$AEGISOS_VERSION" | \
+    sudo tee "$ROOTFS/etc/issue.net" > /dev/null
 
 # Remove dynamic MOTD scripts
 sudo rm -f "$ROOTFS/etc/update-motd.d/"* 2>/dev/null || true

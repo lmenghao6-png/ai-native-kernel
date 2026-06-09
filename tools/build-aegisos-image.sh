@@ -5,10 +5,21 @@ set -euo pipefail
 
 ROOTFS="${ROOTFS:-build/aegisos/linux-rootfs}"
 BUILD_DIR="${BUILD_DIR:-build/aegisos}"
+VERSION_FILE="${VERSION_FILE:-VERSION}"
 ISO_DIR="$BUILD_DIR/iso"
 IMAGE_DIR="$BUILD_DIR/image"
 SQUASHFS="$BUILD_DIR/aegisos-root.squashfs"
-ISO="$IMAGE_DIR/aegisos-beta.iso"
+
+if [ ! -f "$VERSION_FILE" ]; then
+    echo "Version file not found: $VERSION_FILE" >&2
+    exit 1
+fi
+AEGISOS_VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
+if [[ ! "$AEGISOS_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-z0-9]+([.-][a-z0-9]+)*)?$ ]]; then
+    echo "Invalid AegisOS version: $AEGISOS_VERSION" >&2
+    exit 1
+fi
+ISO="$IMAGE_DIR/aegisos-$AEGISOS_VERSION.iso"
 
 if [ "$(id -u)" -eq 0 ]; then
     SUDO=()
@@ -35,7 +46,8 @@ need_cmd mformat
 
 ${SUDO[@]} rm -rf "$ISO_DIR"
 ${SUDO[@]} rm -f "$SQUASHFS" "$ISO"
-mkdir -p "$ISO_DIR/boot/grub" "$ISO_DIR/live" "$IMAGE_DIR"
+${SUDO[@]} mkdir -p "$ISO_DIR/boot/grub" "$ISO_DIR/live" "$IMAGE_DIR"
+${SUDO[@]} chown -R "$(id -u):$(id -g)" "$ISO_DIR" "$IMAGE_DIR"
 
 kernel_image="$(find "$ROOTFS/boot" -maxdepth 1 -type f -name 'vmlinuz-*' | sort | tail -n 1)"
 initrd_image="$(find "$ROOTFS/boot" -maxdepth 1 -type f -name 'initrd.img-*' | sort | tail -n 1)"
@@ -59,11 +71,11 @@ cp "$kernel_image" "$ISO_DIR/boot/vmlinuz"
 cp "$initrd_image" "$ISO_DIR/boot/initrd.img"
 ${SUDO[@]} cp "$SQUASHFS" "$ISO_DIR/live/filesystem.squashfs"
 
-cat > "$ISO_DIR/boot/grub/grub.cfg" << 'EOF'
+cat > "$ISO_DIR/boot/grub/grub.cfg" << EOF
 set default=0
 set timeout=5
 
-menuentry "AegisOS 0.3-beta (Live)" {
+menuentry "AegisOS $AEGISOS_VERSION (Live)" {
     linux /boot/vmlinuz boot=live components console=ttyS0,115200 systemd.show_status=1
     initrd /boot/initrd.img
 }

@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Single-source `VERSION` metadata for images, CLI tools, MOTD, and OS identity
+- Installer-time administrator account and password setup
 - Physical page release/reuse with PMM and VMM boot-time self-tests
 - Transactional VMM page mapping with data-page and page-table rollback
 - QEMU integration test that executes a Ring 3 ELF program and verifies exit
@@ -11,6 +13,8 @@
 - Automated ISO installation and reboot test using a disposable QEMU disk
 
 ### Changed
+- Live images use a removable `aegis-live` account; installed systems remove it
+- ISO build output directories are created safely across root/non-root stages
 - Bastion now consumes real Limine memory map and HHDM responses
 - Initramfs now parses CPIO `newc` archives and constructs the VFS tree
 - ELF loader now validates and maps x86-64 `PT_LOAD` segments
@@ -19,6 +23,8 @@
   BIOS/GPT boot, creates unique SSH host keys, and cleans up failed installs
 
 ### Fixed
+- Distribution CI can build the ISO after the privileged rootfs stage
+- Installed systems no longer inherit a published root password
 - Failed user-page allocations no longer leak pages or advance the virtual address cursor
 - PMM free-page bitmap initialization and VMM CR3 allocation
 - Limine request IDs and request markers

@@ -75,17 +75,22 @@ AegisOS combines a standard Debian bookworm base with a self-hosted AI runtime t
 ### Download ISO
 Get the latest ISO from [Releases](https://github.com/lmenghao6-png/ai-native-kernel/releases).
 
+The current images are developer previews intended for virtual machines and
+disposable test hardware. The Live environment uses `aegis-live` / `aegisos`;
+SSH password authentication is disabled. Installation requires creating a new
+administrator account, removes the Live account, and locks direct root login.
+
 ### Boot (VM)
 ```bash
 qemu-system-x86_64 -machine q35 -m 1G -no-reboot \
   -nographic -serial mon:stdio \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/ovmf/OVMF.fd \
-  -cdrom aegisos-beta.iso
+  -cdrom aegisos-0.3-dev.iso
 ```
 
 ### Boot (Physical)
 ```bash
-sudo dd if=aegisos-beta.iso of=/dev/sdX bs=4M status=progress
+sudo dd if=aegisos-0.3-dev.iso of=/dev/sdX bs=4M status=progress
 ```
 Boot in UEFI mode. Select "AegisOS Live" to try, or "Install AegisOS to Disk" to install.
 
@@ -121,7 +126,7 @@ sudo apt-get install -y debian-archive-keyring mmdebstrap squashfs-tools grub-pc
 make aegisos-image
 
 # Output
-ls -lh build/aegisos/image/aegisos-beta.iso
+ls -lh build/aegisos/image/aegisos-0.3-dev.iso
 
 # Optional local AI backend: add these to the rootfs, then rebuild the image
 sudo install -Dm755 /path/to/llama-cli \

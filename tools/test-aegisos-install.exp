@@ -1,9 +1,14 @@
 #!/usr/bin/expect -f
 
-set iso "build/aegisos/image/aegisos-beta.iso"
+set version_file [open "VERSION" r]
+set version [string trim [read $version_file]]
+close $version_file
+set iso "build/aegisos/image/aegisos-$version.iso"
 set disk "build/aegisos/aegisos-install-test.qcow2"
 set ovmf "/usr/share/ovmf/OVMF.fd"
 set log_path "build/aegisos/install-test.log"
+set admin_user "aegisadmin"
+set admin_password "AegisOS-Test-2026"
 
 proc fail {message} {
     puts stderr $message
@@ -46,6 +51,18 @@ expect {
     timeout { fail "Timed out waiting for erase confirmation" }
 }
 expect {
+    "Administrator username:" { send "$admin_user\r" }
+    timeout { fail "Timed out waiting for administrator username" }
+}
+expect {
+    "Administrator password:" { send "$admin_password\r" }
+    timeout { fail "Timed out waiting for administrator password" }
+}
+expect {
+    "Confirm administrator password:" { send "$admin_password\r" }
+    timeout { fail "Timed out waiting for password confirmation" }
+}
+expect {
     "Power off now?" { send "y\r" }
     timeout { fail "AegisOS installation did not complete" }
 }
@@ -61,15 +78,15 @@ spawn qemu-system-x86_64 -machine q35 -m 1G -no-reboot \
     -drive file=$disk,format=qcow2,if=virtio
 
 expect {
-    "aegisos login:" { send "root\r" }
+    "aegisos login:" { send "$admin_user\r" }
     timeout { fail "Installed system did not reach a login prompt" }
 }
 expect {
-    "Password:" { send "aegisos\r" }
+    "Password:" { send "$admin_password\r" }
     timeout { fail "Installed system did not request a password" }
 }
 expect {
-    -re {root@aegisos:.*# } {}
+    -re {aegisadmin@aegisos:.*\$ } {}
     timeout { fail "Unable to log in to the installed system" }
 }
 
@@ -78,17 +95,22 @@ expect {
     "AEGISOS_STORAGE_OK" {}
     timeout { fail "Installed storage layout is invalid" }
 }
-send "test -s /etc/machine-id && test -s /etc/ssh/ssh_host_ed25519_key && echo AEGISOS_IDENTITY_OK\r"
+send "test -s /etc/machine-id && printf '%s\\n' '$admin_password' | sudo -S test -s /etc/ssh/ssh_host_ed25519_key && echo AEGISOS_IDENTITY_OK\r"
 expect {
     "AEGISOS_IDENTITY_OK" {}
     timeout { fail "Installed identity or SSH keys are missing" }
+}
+send "printf '%s\\n' '$admin_password' | sudo -S passwd -S root | grep -q '^root L' && ! getent passwd aegis-live && ! grep -q 'Live login:' /etc/motd && echo AEGISOS_ACCOUNTS_OK\r"
+expect {
+    "AEGISOS_ACCOUNTS_OK" {}
+    timeout { fail "Installed credentials were not hardened" }
 }
 send "systemctl is-active --quiet aegisosd guardian ssh && test -z \"\$(systemctl --failed --no-legend --plain)\" && echo AEGISOS_INSTALLED_SERVICES_OK\r"
 expect {
     "AEGISOS_INSTALLED_SERVICES_OK" {}
     timeout { fail "Installed services are unhealthy" }
 }
-send "poweroff\r"
+send "printf '%s\\n' '$admin_password' | sudo -S poweroff\r"
 expect {
     eof {}
     timeout { fail "Timed out waiting for installed system shutdown" }

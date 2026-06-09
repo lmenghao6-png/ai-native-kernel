@@ -1,7 +1,10 @@
 #!/usr/bin/expect -f
 
 set timeout 150
-set iso "build/aegisos/image/aegisos-beta.iso"
+set version_file [open "VERSION" r]
+set version [string trim [read $version_file]]
+close $version_file
+set iso "build/aegisos/image/aegisos-$version.iso"
 set ovmf "/usr/share/ovmf/OVMF.fd"
 set log_path "build/aegisos/iso-boot-test.log"
 
@@ -21,7 +24,7 @@ spawn qemu-system-x86_64 -machine q35 -m 1G -no-reboot \
     -cdrom $iso
 
 expect {
-    "aegisos login:" { send "root\r" }
+    "aegisos login:" { send "aegis-live\r" }
     timeout {
         puts stderr "Timed out waiting for AegisOS login"
         exit 1
@@ -37,7 +40,7 @@ expect {
 }
 
 expect {
-    -re {root@aegisos:.*# } {}
+    -re {aegis-live@aegisos:.*\$ } {}
     timeout {
         puts stderr "Timed out waiting for root shell"
         exit 1
@@ -71,7 +74,7 @@ expect {
     }
 }
 
-send "poweroff\r"
+send "sudo -n poweroff\r"
 expect {
     eof {}
     timeout {

@@ -3,9 +3,13 @@ name: Build AegisOS
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build-bastion:
@@ -13,6 +17,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+
+      - name: Validate release version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: test "v$(tr -d '[:space:]' < VERSION)" = "$GITHUB_REF_NAME"
 
       - name: Install dependencies
         run: |
@@ -58,6 +66,7 @@ jobs:
 
       - name: Build rootfs
         run: |
+          set -o pipefail
           sudo bash tools/build-aegisos-rootfs.sh 2>&1 | tail -20
 
       - name: Build ISO
@@ -75,9 +84,9 @@ jobs:
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aegisos-beta-iso
+          name: aegisos-developer-preview-iso
           path: |
-            build/aegisos/image/aegisos-beta.iso
+            build/aegisos/image/aegisos-*.iso
             build/aegisos/iso-boot-test.log
             build/aegisos/install-test.log
 
@@ -86,16 +95,20 @@ jobs:
     runs-on: ubuntu-24.04
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build-bastion, build-distro]
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: aegisos-beta-iso
+          name: aegisos-developer-preview-iso
+          path: release
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            aegisos-beta.iso
+            release/image/aegisos-*.iso
+          fail_on_unmatched_files: true
           body: |
             AegisOS ${{ github.ref_name }}
             
@@ -107,7 +120,7 @@ jobs:
             - Development tools (git, gcc, make, vim, htop)
             
             ## Quick start
-            1. Write ISO to USB: `dd if=aegisos-beta.iso of=/dev/sdX bs=4M`
+            1. Write ISO to USB: `dd if=aegisos-*.iso of=/dev/sdX bs=4M`
             2. Boot in UEFI mode
             3. Select "Install AegisOS to Disk" in GRUB
-            4. Reboot → AI Console auto-starts
+            4. Create a unique administrator account when prompted
