@@ -1,199 +1,180 @@
 # AegisOS
 
-**AI-Native Operating System** — a Debian-based Linux distribution with a built-in autonomous AI agent framework.
+AegisOS is a Debian-based AI Linux distribution. It uses the standard Debian
+Linux kernel and gives its built-in Agent and Guardian unrestricted root
+authority over the operating system.
 
-AegisOS combines a standard Debian bookworm base with a self-hosted AI runtime that can observe system state, make decisions, and take autonomous actions to keep your system secure and stable.
+The custom Bastion kernel has been removed. The product is now a Linux
+distribution, installer, root AI runtime, and signed release/update toolchain.
 
----
+## Product Documentation
 
-## Architecture
+- [Product requirements](PRD.md)
+- [Development roadmap](ROADMAP.md)
+- [Security model](SECURITY.md)
+- [Release procedure](RELEASE.md)
+- [Changelog](CHANGELOG.md)
 
-```
-┌─────────────────────────────────────────────┐
-│                  AegisOS                     │
-├─────────────────────────────────────────────┤
-│  AI Console (natural language interface)     │
-│  aegisctl (management CLI)                   │
-├─────────────────────────────────────────────┤
-│  Agent Framework (framework.py)              │
-│  ├── Planner (LLM decision engine)           │
-│  ├── Memory (SQLite persistent context)      │
-│  └── Plugin Registry                         │
-├──────────────────┬──────────────────────────┤
-│  5 Sensors        │  3 Actors                │
-│  ├── disk         │  ├── bash                │
-│  ├── process      │  ├── systemd             │
-│  ├── memory       │  └── apt                 │
-│  ├── logs         │                          │
-│  └── network      │                          │
-├──────────────────┴──────────────────────────┤
-│  Guardian Daemon (proactive AI monitor)      │
-├─────────────────────────────────────────────┤
-│  Bastion Kernel (custom x86_64, research)    │
-│  ├── VFS + CPIO initramfs + ELF64 loader     │
-│  ├── PMM/VMM + kheap + TSS                   │
-│  ├── Ring 3 process bootstrap                │
-│  └── Minimal syscall ABI                     │
-├─────────────────────────────────────────────┤
-│  Debian bookworm base + Linux kernel         │
-└─────────────────────────────────────────────┘
+## Root AI Model
+
+The Agent can execute every registered actor capability, including arbitrary
+shell commands, file writes, package installation, and systemd control. The
+Guardian can issue unrestricted `ROOT_AUTO` shell commands.
+
+This is intentionally not a least-privilege design. Prompt injection through
+logs, files, network responses, or model output can become root code execution.
+Use disposable machines until the model, prompts, and operational controls have
+been independently reviewed.
+
+Every root action is written before and after execution to:
+
+```text
+/var/log/aegisos/root-actions.jsonl
 ```
 
-## Features
+`auditd` also watches the AI code, configuration, units, and root action log.
+A root process can still alter local evidence, so production deployments should
+forward the journal and audit stream to an external append-only collector.
 
-### AI Agent Framework
-- **8 self-registering plugins**: 5 sensors (disk, process, memory, logs, network) + 3 actors (bash, systemd, apt)
-- **LLM Planner**: supports any OpenAI-compatible API (DeepSeek, OpenAI, Ollama, Claude) — configured in `/etc/aegisos/ai-agent.conf`
-- **Local fallback**: supports offline GGUF inference when `llama-cli` and a compatible model are installed
-- **Agent Memory**: SQLite-backed persistent context storage with observation/action/goal tracking
-- **Goal system**: define long-term objectives the agent works toward autonomously
+Emergency stop:
 
-### Guardian Daemon
-- Proactive system monitoring every 60 seconds
-- 4-level decision output: IGNORE → SUGGEST → SAFE_AUTO → NEEDS_CONFIRM
-- Automatic health checks: CPU, memory, disk, SSH attacks, service failures
-- Parameterized, read-only unattended diagnostics; mutations require approval
-- Structured decision output with reasoning
-
-### System Management
-- **ai-console**: natural language interface to the AI agent
-- **aegisctl**: management CLI (status, doctor, monitor, logs, update)
-- **Guided installer**: GPT partitioning, EFI + legacy BIOS dual boot
-- **Security hardened**: UFW default-deny firewall, SSH key-only auth
-
-### Bastion Kernel (Research)
-- Custom x86_64 kernel with Limine boot protocol
-- Virtual filesystem (VFS): lookup, open, read, close operations
-- Initramfs CPIO newc format parser
-- ELF64 program loader with BSS zeroing
-- GDT, IDT, PMM, VMM, kernel heap, TSS
-- Ring 3 ELF process bootstrap with serial write and exit syscalls
-- Scheduler interfaces are present; multitasking and preemption remain in development
-
-## Quick Start
-
-### Download ISO
-Get the latest ISO from [Releases](https://github.com/lmenghao6-png/ai-native-kernel/releases).
-
-The current images are developer previews intended for virtual machines and
-disposable test hardware. The Live environment uses `aegis-live` / `aegisos`;
-SSH password authentication is disabled. Installation requires creating a new
-administrator account, removes the Live account, and locks direct root login.
-
-### Boot (VM)
 ```bash
-qemu-system-x86_64 -machine q35 -m 1G -no-reboot \
-  -nographic -serial mon:stdio \
-  -drive if=pflash,format=raw,readonly=on,file=/usr/share/ovmf/OVMF.fd \
-  -cdrom aegisos-0.3-dev.iso
+aegisctl ai-stop
+aegisctl status
+
+# Re-enable after inspection
+aegisctl ai-start
 ```
 
-### Boot (Physical)
-```bash
-sudo dd if=aegisos-0.3-dev.iso of=/dev/sdX bs=4M status=progress
-```
-Boot in UEFI mode. Select "AegisOS Live" to try, or "Install AegisOS to Disk" to install.
+The stop command creates `/etc/aegisos/agent-disabled`; both AI units have a
+systemd condition that prevents restart while this marker exists.
 
-### Post-Install
-```bash
-# Configure AI backend
-sudo nano /etc/aegisos/ai-agent.conf
+## Components
 
-# Check system health
+- Debian bookworm and the Debian Linux kernel
+- Root Agent with five sensors and Bash, systemd, and APT actors
+- Root Guardian for periodic monitoring and direct remediation
+- OpenAI-compatible cloud or loopback model endpoints
+- Optional local GGUF inference through `llama-cli`
+- SQLite observation, action, goal, and context memory
+- Guided GPT disk installer with UEFI and legacy BIOS boot
+- SSH key-only remote authentication and active UFW default-deny policy
+- GPG-verified application updates with configuration migration and rollback
+- ISO checksums, release manifests, QEMU boot tests, and QEMU install tests
+
+## Install
+
+Boot the ISO in UEFI mode and select `Install AegisOS to Disk`. The installer:
+
+1. Erases and partitions the selected disk.
+2. Creates a unique sudo administrator and locks direct root login.
+3. Accepts an optional SSH public key.
+4. Removes the published Live account.
+5. Generates unique SSH host keys.
+6. Enables the root AI, SSH, UFW, and audit services.
+
+The Live credentials are `aegis-live` / `aegisos`. SSH password authentication
+is disabled in both Live and installed systems.
+
+## Operations
+
+```bash
+aegisctl status
 aegisctl doctor
-
-# Start AI console
-ai-console
-
-# Talk to the agent
-ai-console "What is the current disk usage?"
+aegisctl logs
+aegisctl root-audit 100
+ai-console "Summarize likely causes of the failed services"
 ```
 
-## Building from Source
+`ai-console` sends prompts to the configured model backend. It does not execute
+Agent capabilities; autonomous system execution is performed by the Agent and
+Guardian services.
 
-### Prerequisites
-- Ubuntu 24.04 or Debian bookworm
-- Root/sudo access
+Configure the model in `/etc/aegisos/ai-agent.conf`:
 
-### Full ISO Build
-```bash
-# Install build dependencies
-sudo apt-get install -y debian-archive-keyring mmdebstrap squashfs-tools grub-pc-bin \
-    grub-efi-amd64-bin xorriso mtools parted dosfstools rsync \
-    clang lld make git cpio
-
-# Build rootfs + squashfs + bootable ISO
-make aegisos-image
-
-# Output
-ls -lh build/aegisos/image/aegisos-0.3-dev.iso
-
-# Optional local AI backend: add these to the rootfs, then rebuild the image
-sudo install -Dm755 /path/to/llama-cli \
-    build/aegisos/linux-rootfs/usr/local/libexec/aegisos/llama-cli
-sudo install -Dm644 /path/to/model.gguf \
-    build/aegisos/linux-rootfs/usr/local/share/aegisos/models/qwen2.5-0.5b-q4_k_m.gguf
-bash tools/build-aegisos-image.sh
-```
-
-### Bastion Kernel Only
-```bash
-make all -j$(nproc)
-# Output: build/aikernel.elf + build/initramfs.cpio
-
-# Test with QEMU
-make fat
-qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -m 256M \
-    -nographic -serial mon:stdio \
-    -drive format=raw,file=fat:rw:build/fatroot
-```
-
-## Configuration
-
-### AI Backend
-Edit `/etc/aegisos/ai-agent.conf`:
 ```ini
 [api]
-endpoint = https://api.deepseek.com/v1
-model = deepseek-chat
-key = your-api-key-here
-local_model_enabled = true
+endpoint = http://127.0.0.1:11434/v1
+model = local-model
+key =
+local_model_enabled = false
+
+[agent]
+tick_interval = 10
+privilege_mode = root
 ```
 
-Supported providers: DeepSeek, OpenAI, Ollama, Claude, or any OpenAI-compatible endpoint.
+Guardian configuration is stored in `/etc/aegisos/guardian.conf`:
 
-### Guardian Goals
-Edit `/etc/aegisos/guardian.conf`:
 ```ini
 [guardian]
 enabled = true
 interval = 60
-auto_execute_safe = true
-goals = Keep the system secure and stable. Monitor disk space, memory, and service health.
+auto_execute_root = true
+goals = Keep the system secure and stable.
 ```
 
-## CI/CD
+## Signed Updates
 
-GitHub Actions automatically:
-1. **Test** Python policy code and build the Bastion kernel
-2. **Boot** Bastion in QEMU and verify a Ring 3 program runs and exits
-3. **Build** the full AegisOS ISO distribution
-4. **Log in** to the ISO in QEMU and verify hardened services
-5. **Release** when a version tag (`v*`) is pushed
+Installed systems trust `/usr/share/keyrings/aegisos-release.gpg`. A release
+image must be built with the public key supplied through
+`AEGISOS_RELEASE_PUBLIC_KEY` or `AEGISOS_RELEASE_PUBLIC_KEY_B64`.
 
-## Project Status
+Apply and roll back an application update:
 
-| Component | Version | Status |
-|-----------|---------|--------|
-| AegisOS Distribution | 0.3-dev | Bootable integration |
-| Agent Framework | 0.3-dev | Policy-restricted prototype |
-| Guardian Daemon | 0.3-dev | Read-only autonomous prototype |
-| Bastion Kernel | 0.3-dev | Single-process research kernel |
+```bash
+aegisctl update https://example.invalid/aegisos/manifest.json
+aegisctl rollback
+```
+
+The updater verifies the detached GPG signature and bundle SHA-256 before
+creating a snapshot. Failed installation or migration restores that snapshot
+automatically.
+
+Remove the AI layer while retaining a backup:
+
+```bash
+sudo aegis-uninstall
+sudo aegis-uninstall --purge
+```
+
+## Build
+
+Prerequisites on Ubuntu 24.04 or Debian:
+
+```bash
+sudo apt-get install -y debian-archive-keyring mmdebstrap squashfs-tools \
+  grub-pc-bin grub-efi-amd64-bin xorriso mtools parted dosfstools rsync \
+  expect qemu-system-x86 qemu-utils ovmf
+```
+
+Build and test:
+
+```bash
+make test
+make image
+make test-iso
+make test-install
+```
+
+Artifacts:
+
+```text
+build/aegisos/image/aegisos-<version>.iso
+build/aegisos/image/SHA256SUMS
+build/aegisos/image/release-manifest.json
+```
+
+`SOURCE_DATE_EPOCH` controls squashfs timestamps and release metadata. See
+[RELEASE.md](RELEASE.md) for signing-key and tag procedures.
+
+## Status
+
+The current image is a developer preview. Boot, installation, root AI identity,
+SSH credentials, firewall, audit service, signed update, migration, and rollback
+are automated. The unrestricted root AI model is inherently unsuitable for
+systems where model input is not fully trusted.
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) file.
-
----
-
-Built with ❤️ by the AegisOS team.
+MIT License. See [LICENSE](LICENSE).

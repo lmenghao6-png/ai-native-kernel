@@ -14,6 +14,7 @@ Sensors and actors are self-registering plugins.
 """
 
 import json, os, subprocess, sys, time, importlib, inspect
+from urllib.parse import urlparse
 from pathlib import Path
 from abc import ABC, abstractmethod
 from collections import deque
@@ -255,6 +256,15 @@ OR if nothing to do:
         self.endpoint = endpoint or os.environ.get("AI_ENDPOINT", "https://api.deepseek.com/v1")
         self.model = model or os.environ.get("AI_MODEL", "deepseek-chat")
         self.key = key or os.environ.get("OPENAI_API_KEY", "")
+        self.local_model_enabled = True
+        self.local_model = os.environ.get(
+            "AI_LOCAL_MODEL",
+            "/usr/local/share/aegisos/models/qwen2.5-0.5b-q4_k_m.gguf",
+        )
+        self.llama_cli = os.environ.get(
+            "AI_LLAMA_CLI",
+            "/usr/local/libexec/aegisos/llama-cli",
+        )
         
         # Load from config
         for path in ["/etc/aegisos/ai-agent.conf", os.path.expanduser("~/.config/aegisos/ai-agent.conf")]:
@@ -271,8 +281,78 @@ OR if nothing to do:
                             if k == "endpoint": self.endpoint = v
                             elif k == "model": self.model = v
                             elif k == "key" and v: self.key = v
+                            elif k == "local_model_enabled":
+                                self.local_model_enabled = v.lower() in ("true", "yes", "1")
             except FileNotFoundError:
                 pass
+
+    def _cloud_available(self) -> bool:
+        if self.key:
+            return True
+        try:
+            hostname = urlparse(self.endpoint).hostname
+        except ValueError:
+            return False
+        return hostname in ("localhost", "127.0.0.1", "::1")
+
+    def _local_available(self) -> bool:
+        return (
+            self.local_model_enabled
+            and os.path.isfile(self.local_model)
+            and os.access(self.llama_cli, os.X_OK)
+        )
+
+    def _call_local(self, messages: list[dict]) -> str | None:
+        prompt = ""
+        for message in messages:
+            role = message.get("role", "user")
+            content = message.get("content", "")
+            prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
+        prompt += "<|im_start|>assistant\n"
+
+        try:
+            result = subprocess.run(
+                [
+                    self.llama_cli,
+                    "-m",
+                    self.local_model,
+                    "-p",
+                    prompt,
+                    "-n",
+                    "512",
+                    "--temp",
+                    "0.3",
+                    "--log-disable",
+                    "--no-display-prompt",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
+        if result.returncode != 0:
+            return None
+        text = result.stdout.strip()
+        for stop in ("<|im_end|>", "<|im_start|>"):
+            if stop in text:
+                text = text.split(stop, 1)[0]
+        return text.strip() or None
+
+    @staticmethod
+    def _parse_decision(text: str | None) -> dict | None:
+        if not text:
+            return None
+        import re
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if not match:
+            return None
+        try:
+            decision = json.loads(match.group())
+        except json.JSONDecodeError:
+            return None
+        return decision if isinstance(decision, dict) else None
     
     def decide(self, observations, goals, history, capabilities) -> dict:
         if not self.endpoint.endswith("/chat/completions"):
@@ -297,50 +377,90 @@ OR if nothing to do:
             {"role": "user", "content": "Analyze and decide the next action."},
         ]
         
-        try:
-            import urllib.request, urllib.error
-            body = json.dumps({
-                "model": self.model,
-                "messages": messages,
-                "temperature": 0.3,
-                "max_tokens": 512,
-            }).encode()
-            
-            req = urllib.request.Request(
-                endpoint, data=body,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {self.key}" if self.key else "",
-                },
-                method="POST",
-            )
-            
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                result = json.loads(resp.read())
-                text = result["choices"][0]["message"]["content"]
-                
-            # Extract JSON from response
-            import re
-            match = re.search(r'\{.*\}', text, re.DOTALL)
-            if match:
-                return json.loads(match.group())
-            return {"action": "wait", "reasoning": "could not parse LLM response"}
-        except Exception as e:
-            return {"action": "wait", "reasoning": f"LLM error: {e}"}
+        cloud_error = None
+        if self._cloud_available():
+            try:
+                import urllib.request, urllib.error
+                body = json.dumps({
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": 0.3,
+                    "max_tokens": 512,
+                }).encode()
+
+                headers = {"Content-Type": "application/json"}
+                if self.key:
+                    headers["Authorization"] = f"Bearer {self.key}"
+                req = urllib.request.Request(
+                    endpoint,
+                    data=body,
+                    headers=headers,
+                    method="POST",
+                )
+
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    result = json.loads(resp.read())
+                    text = result["choices"][0]["message"]["content"]
+                decision = self._parse_decision(text)
+                if decision:
+                    return decision
+                cloud_error = "could not parse LLM response"
+            except Exception as e:
+                cloud_error = str(e)
+
+        if self._local_available():
+            decision = self._parse_decision(self._call_local(messages))
+            if decision:
+                return decision
+            return {"action": "wait", "reasoning": "could not parse local LLM response"}
+
+        if cloud_error:
+            return {"action": "wait", "reasoning": f"LLM error: {cloud_error}"}
+        return {"action": "wait", "reasoning": "no AI backend configured"}
 
 # ─── Runtime ──────────────────────────────────────────
 
-AUTONOMOUS_ACTION_ALLOWLIST = frozenset({
-    ("bash", "check_command_exists"),
-    ("systemd", "service_status"),
-    ("systemd", "list_failed"),
-    ("apt", "list_upgradable"),
-})
+ROOT_AUDIT_LOG = os.environ.get(
+    "AEGISOS_ROOT_AUDIT_LOG",
+    "/var/log/aegisos/root-actions.jsonl",
+)
 
 
-def autonomous_action_allowed(actor_name: str, action_name: str) -> bool:
-    """Return whether an unattended daemon may execute this action."""
-    return (actor_name, action_name) in AUTONOMOUS_ACTION_ALLOWLIST
+def root_capabilities() -> list[dict]:
+    """Return every registered action available to the root AI runtime."""
+    return [
+        {**capability, "execution": "root"}
+        for capability in PluginRegistry.all_actor_capabilities()
+    ]
+
+
+def audit_root_action(event: str, actor: str, action: str, payload: dict):
+    """Append a durable action event for auditd and journal collection."""
+    record = {
+        "timestamp": time.time(),
+        "event": event,
+        "actor": actor,
+        "action": action,
+        "payload": payload,
+    }
+    encoded = json.dumps(record, ensure_ascii=True, sort_keys=True)
+    print(f"[agent-root-audit] {encoded}", flush=True)
+    try:
+        parent = os.path.dirname(ROOT_AUDIT_LOG)
+        if parent:
+            os.makedirs(parent, mode=0o750, exist_ok=True)
+        descriptor = os.open(
+            ROOT_AUDIT_LOG,
+            os.O_APPEND | os.O_CREAT | os.O_WRONLY,
+            0o600,
+        )
+        try:
+            os.write(descriptor, (encoded + "\n").encode())
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except OSError as error:
+        print(f"[agent-root-audit] write failed: {error}", flush=True)
 
 
 class AgentRuntime:
@@ -368,7 +488,7 @@ class AgentRuntime:
         """Run planner to decide next action."""
         goals = self.memory.active_goals()
         history = self.memory.recent_actions(10)
-        capabilities = PluginRegistry.all_actor_capabilities()
+        capabilities = root_capabilities()
         return self.planner.decide(observations, goals, history, capabilities)
     
     def act(self, decision):
@@ -383,23 +503,26 @@ class AgentRuntime:
             return
         
         params = decision.get("params", {})
-        if not autonomous_action_allowed(actor_name, action_name):
-            result = {
-                "success": False,
-                "denied": True,
-                "error": "action requires explicit user approval",
-            }
-            self.memory.record_action(actor_name, action_name, params, result)
-            print(f"[agent] denied unattended action {actor_name}.{action_name}")
-            return result
-
+        audit_root_action(
+            "started",
+            actor_name,
+            action_name,
+            {
+                "params": params,
+                "reasoning": decision.get("reasoning", ""),
+                "risk": decision.get("risk", ""),
+            },
+        )
         try:
             result = actor.execute(action_name, params)
             self.memory.record_action(actor_name, action_name, params, result)
+            audit_root_action("completed", actor_name, action_name, result)
             return result
         except Exception as e:
             error = {"success": False, "error": str(e)}
             self.memory.record_action(actor_name, action_name, params, error)
+            audit_root_action("failed", actor_name, action_name, error)
+            return error
     
     def run_forever(self, tick_interval: float = 10.0):
         """Main agent loop."""

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Aegis Guardian — proactive AI system monitor and autonomous agent.
+"""Aegis Guardian - proactive root AI system monitor.
 
 Runs as a daemon. Periodically samples system state, evaluates it through
-the AI model, and takes autonomous action when safe and appropriate.
+the AI model, and can execute the model's commands as root.
 
 Architecture:
   system state → LLM analysis → decision (ignore/suggest/auto-act)
@@ -11,6 +11,7 @@ Standing orders (goals) are configured in /etc/aegisos/guardian.conf
 """
 
 import json, os, shlex, subprocess, sys, time, urllib.request, urllib.error
+from urllib.parse import urlparse
 from collections import deque
 from pathlib import Path
 
@@ -23,27 +24,20 @@ PID_FILE = "/run/aegisos/guardian.pid"
 INTERVAL = int(os.environ.get("GUARDIAN_INTERVAL", "60"))
 MAX_HISTORY = 20  # How many past events to keep for context
 
-GUARDIAN_SYSTEM_PROMPT = """You are the Guardian, an autonomous AI monitoring an AegisOS system.
-You have root access. Your job is to observe, detect issues, and take proactive action.
+ROOT_AUDIT_LOG = "/var/log/aegisos/root-actions.jsonl"
+
+GUARDIAN_SYSTEM_PROMPT = """You are the Guardian, an autonomous root AI monitoring an AegisOS system.
+You have unrestricted root access. Your job is to observe, detect issues, and directly repair the system.
 
 You receive a system state snapshot periodically. For each snapshot, you must:
 1. Assess if anything needs attention
 2. Decide on an action level:
    - IGNORE: nothing to do
    - SUGGEST: recommend action to user (output suggestion only)
-   - SAFE_AUTO: take safe action automatically (reading files, checking services)
-   - NEEDS_CONFIRM: important action that needs user approval
+   - ROOT_AUTO: execute commands immediately as root
 
-Safe auto-actions are read-only diagnostics:
-- Reading system state (ps, df, free, journalctl, systemctl status)
-- Listing files, devices, sockets, processes, and failed services
-
-Needs-confirm actions:
-- Installing/removing packages
-- Modifying system configuration
-- Killing processes
-- Network/firewall changes
-- Disk operations (mount, fsck)
+Use ROOT_AUTO when a concrete command can advance the configured goals.
+Commands are executed by bash with no approval or command restriction.
 
 Current goals: {goals}
 
@@ -55,9 +49,9 @@ Top CPU processes: {top_processes}
 Recent log anomalies: {log_anomalies}
 
 Output format:
-ACTION: IGNORE|SUGGEST|SAFE_AUTO|NEEDS_CONFIRM
+ACTION: IGNORE|SUGGEST|ROOT_AUTO
 REASON: <brief explanation of what you detected>
-COMMANDS: <bash commands if SAFE_AUTO or NEEDS_CONFIRM, one per line after ```bash>
+COMMANDS: <bash commands if ROOT_AUTO, one per line after ```bash>
 DETAIL: <detailed analysis for user>"""
 
 
@@ -73,9 +67,14 @@ def load_config():
     config = {
         "enabled": True,
         "interval": 60,
-        "auto_execute_safe": True,
+        "auto_execute_root": True,
         "goals": "Keep the system secure and stable. Monitor disk space, memory, and service health.",
-        "api": {"endpoint": "", "model": "", "key": ""},
+        "api": {
+            "endpoint": "https://api.deepseek.com/v1",
+            "model": "deepseek-chat",
+            "key": "",
+            "local_model_enabled": True,
+        },
     }
     # Load agent config first for API settings
     for path in [AGENT_CONFIG, os.path.expanduser("~/.config/aegisos/ai-agent.conf")]:
@@ -93,7 +92,10 @@ def load_config():
                         k, v = line.split("=", 1)
                         k, v = k.strip(), v.strip()
                         if k in config["api"]:
-                            config["api"][k] = v
+                            if k == "local_model_enabled":
+                                config["api"][k] = v.lower() in ("true", "yes", "1")
+                            else:
+                                config["api"][k] = v
         except (FileNotFoundError, PermissionError):
             continue
     
@@ -114,10 +116,15 @@ def load_config():
                     k, v = line.split("=", 1)
                     k, v = k.strip(), v.strip()
                     if k in config:
-                        if k == "auto_execute_safe":
+                        if k in ("enabled", "auto_execute_root"):
                             config[k] = v.lower() in ("true", "yes", "1")
+                        elif k == "auto_execute_safe":
+                            config["auto_execute_root"] = v.lower() in ("true", "yes", "1")
                         elif k == "interval":
-                            config[k] = int(v)
+                            try:
+                                config[k] = max(10, int(v))
+                            except ValueError:
+                                pass
                         else:
                             config[k] = v
     except FileNotFoundError:
@@ -199,10 +206,23 @@ def get_system_snapshot():
 
 def call_llm(config, messages):
     """Call LLM - use cloud if available, local model as fallback."""
-    if config["api"]["key"]:
-        return call_cloud_llm(config, messages)
-    else:
+    endpoint = config["api"]["endpoint"]
+    try:
+        local_endpoint = urlparse(endpoint).hostname in (
+            "localhost",
+            "127.0.0.1",
+            "::1",
+        )
+    except ValueError:
+        local_endpoint = False
+
+    if config["api"]["key"] or local_endpoint:
+        response = call_cloud_llm(config, messages)
+        if response:
+            return response
+    if config["api"]["local_model_enabled"]:
         return call_local_llm(messages)
+    return None
 
 
 def call_cloud_llm(config, messages):
@@ -217,12 +237,13 @@ def call_cloud_llm(config, messages):
         "max_tokens": 1024,
     }).encode()
     
+    headers = {"Content-Type": "application/json"}
+    if config["api"]["key"]:
+        headers["Authorization"] = f"Bearer {config['api']['key']}"
     req = urllib.request.Request(
-        endpoint, data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {config['api']['key']}",
-        },
+        endpoint,
+        data=body,
+        headers=headers,
         method="POST",
     )
     
@@ -305,79 +326,66 @@ def parse_action(response):
     }
 
 
-SAFE_COMMANDS = {
-    "cat", "date", "df", "dmesg", "du", "file", "free", "grep", "head",
-    "hostname", "id", "ip", "journalctl", "ls", "lsblk", "lscpu", "lspci",
-    "lsusb", "printenv", "ps", "pwd", "ss", "stat", "tail", "uname",
-    "uptime", "w", "wc", "whereis", "which", "who",
-}
-SAFE_SYSTEMCTL_ACTIONS = {
-    "is-active", "is-enabled", "list-unit-files", "list-units", "show", "status",
-}
-SHELL_META = frozenset(";&|><`$(){}[]\n\r")
-
-
-def safe_command_argv(cmd):
-    """Return argv for an allowed read-only command, otherwise None."""
-    if not isinstance(cmd, str) or not cmd.strip():
-        return None
-    if any(char in SHELL_META for char in cmd):
-        return None
-
+def audit_root_command(event, command, payload):
+    record = {
+        "timestamp": time.time(),
+        "event": event,
+        "actor": "guardian",
+        "action": "run_command",
+        "payload": {"command": command, **payload},
+    }
+    encoded = json.dumps(record, ensure_ascii=True, sort_keys=True)
+    log(f"ROOT_AUDIT {encoded}")
     try:
-        argv = shlex.split(cmd, posix=True)
-    except ValueError:
-        return None
-
-    if not argv or "/" in argv[0]:
-        return None
-
-    command = argv[0]
-    if command == "systemctl":
-        if len(argv) < 2 or argv[1] not in SAFE_SYSTEMCTL_ACTIONS:
-            return None
-    elif command not in SAFE_COMMANDS:
-        return None
-
-    return argv
+        os.makedirs(os.path.dirname(ROOT_AUDIT_LOG), mode=0o700, exist_ok=True)
+        descriptor = os.open(
+            ROOT_AUDIT_LOG,
+            os.O_APPEND | os.O_CREAT | os.O_WRONLY,
+            0o600,
+        )
+        try:
+            os.write(descriptor, (encoded + "\n").encode())
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except OSError as error:
+        log(f"root audit write failed: {error}")
 
 
-def is_safe_command(cmd):
-    return safe_command_argv(cmd) is not None
-
-
-def execute_commands(commands, auto_execute_safe):
-    """Execute commands, respecting safety settings."""
+def execute_commands(commands, auto_execute_root):
+    """Execute model commands through a root shell when root mode is enabled."""
     results = []
     for cmd in commands:
-        argv = safe_command_argv(cmd)
-
-        if argv is None:
-            log(f"SKIP (unsafe): {cmd[:80]}")
-            results.append({"command": cmd, "executed": False, "reason": "unsafe"})
+        if not isinstance(cmd, str) or not cmd.strip():
+            results.append({"command": cmd, "executed": False, "reason": "empty"})
             continue
 
-        if not auto_execute_safe:
+        if not auto_execute_root:
             log(f"SKIP (automatic execution disabled): {cmd[:80]}")
             results.append({"command": cmd, "executed": False, "reason": "auto_disabled"})
             continue
 
+        audit_root_command("started", cmd, {})
         try:
             r = subprocess.run(
-                argv,
-                capture_output=True, text=True, timeout=30
+                ["/bin/bash", "-lc", cmd],
+                capture_output=True, text=True, timeout=300,
             )
             status = "OK" if r.returncode == 0 else f"FAIL({r.returncode})"
             log(f"EXEC [{status}] {cmd[:80]}")
-            results.append({
+            result = {
                 "command": cmd, "executed": True,
                 "exit_code": r.returncode,
-                "stdout": r.stdout[:200],
-                "stderr": r.stderr[:200],
-            })
+                "stdout": r.stdout[-4000:],
+                "stderr": r.stderr[-4000:],
+            }
+            results.append(result)
+            audit_root_command("completed", cmd, result)
         except Exception as e:
             log(f"EXEC [ERR] {cmd[:80]}: {e}")
-            results.append({"command": cmd, "executed": False, "error": str(e)})
+            result = {"command": cmd, "executed": False, "error": str(e)}
+            results.append(result)
+            audit_root_command("failed", cmd, result)
     
     return results
 
@@ -427,15 +435,10 @@ def run_cycle(config, history):
         log(f"SUGGEST: {parsed.get('reason', '')}")
         if parsed.get("detail"):
             log(f"  Detail: {parsed['detail'][:200]}")
-    elif parsed["action"] == "SAFE_AUTO":
-        log(f"SAFE_AUTO: {parsed.get('reason', '')}")
+    elif parsed["action"] in ("ROOT_AUTO", "SAFE_AUTO", "NEEDS_CONFIRM"):
+        log(f"ROOT_AUTO: {parsed.get('reason', '')}")
         if parsed["commands"]:
-            execute_commands(parsed["commands"], config["auto_execute_safe"])
-    elif parsed["action"] == "NEEDS_CONFIRM":
-        log(f"NEEDS_CONFIRM: {parsed.get('reason', '')}")
-        log(f"  Commands pending: {len(parsed['commands'])}")
-        for cmd in parsed["commands"]:
-            log(f"    - {cmd[:100]}")
+            execute_commands(parsed["commands"], config["auto_execute_root"])
     
     history.append({
         "timestamp": time.time(),
