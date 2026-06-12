@@ -7,6 +7,25 @@ authority over the operating system.
 The custom Bastion kernel has been removed. The product is now a Linux
 distribution, installer, root AI runtime, and signed release/update toolchain.
 
+## Download
+
+The current build is an unsigned Developer Preview for disposable VMs and test
+hardware:
+
+- [AegisOS 0.3 Developer Preview release](https://github.com/lmenghao6-png/ai-native-kernel/releases/tag/preview-0.3-dev)
+- [Download the amd64 ISO](https://github.com/lmenghao6-png/ai-native-kernel/releases/download/preview-0.3-dev/aegisos-0.3-dev.iso)
+- [Download SHA256SUMS](https://github.com/lmenghao6-png/ai-native-kernel/releases/download/preview-0.3-dev/SHA256SUMS)
+
+Verify the ISO before booting:
+
+```bash
+sha256sum --check SHA256SUMS
+```
+
+This preview does not bundle a local model or contain a release trust key.
+Configure a model backend after installation. Do not use it for sensitive or
+irreplaceable data.
+
 ## Product Documentation
 
 - [Product requirements](PRD.md)
