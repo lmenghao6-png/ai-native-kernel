@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="下载 AegisOS，一款内置自主 AI Agent 的 Debian Linux 系统。">
+  <meta name="theme-color" content="#07110f">
+  <title>AegisOS - 下载 AI 原生 Linux 系统</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="AegisOS 首页">
+      <span class="brand-mark" aria-hidden="true">A</span>
+      <span>AegisOS</span>
+    </a>
+    <nav aria-label="主导航">
+      <a href="#install">安装方法</a>
+      <a href="#about">系统介绍</a>
+      <a href="https://github.com/lmenghao6-png/ai-native-kernel">源代码</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow"><span></span> AEGISOS 0.3 开发者预览版</p>
+        <h1>让 AI 直接<br>管理 Linux</h1>
+        <p class="hero-text">
+          一个可以启动、安装和运行的 AI 原生操作系统。
+          内置 Agent、Guardian、系统监控、自动执行和操作审计。
+        </p>
+        <div class="download-actions">
+          <a class="download-button"
+             href="https://github.com/lmenghao6-png/ai-native-kernel/releases/download/preview-0.3-dev/aegisos-0.3-dev.iso">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14"/>
+            </svg>
+            下载 AegisOS
+          </a>
+          <span class="download-meta">AMD64 ISO · 397 MB · 免费</span>
+        </div>
+        <p class="recommendation">当前版本推荐安装在虚拟机或闲置测试电脑中。</p>
+      </div>
+
+      <div class="system-card" aria-label="AegisOS 系统状态预览">
+        <div class="window-bar">
+          <span></span><span></span><span></span>
+          <strong>AEGIS CONTROL</strong>
+        </div>
+        <div class="status-panel">
+          <div class="status-heading">
+            <div>
+              <small>SYSTEM STATUS</small>
+              <h2>系统运行正常</h2>
+            </div>
+            <span class="pulse"></span>
+          </div>
+          <div class="metric-grid">
+            <div class="metric">
+              <span>AI Agent</span>
+              <strong>在线</strong>
+            </div>
+            <div class="metric">
+              <span>Guardian</span>
+              <strong>监控中</strong>
+            </div>
+            <div class="metric">
+              <span>防火墙</span>
+              <strong>已启用</strong>
+            </div>
+            <div class="metric">
+              <span>操作审计</span>
+              <strong>记录中</strong>
+            </div>
+          </div>
+          <div class="activity">
+            <div class="activity-title">
+              <span>最近活动</span>
+              <small>实时</small>
+            </div>
+            <p><i></i> 系统状态检查完成</p>
+            <p><i></i> Guardian 正在监控服务</p>
+            <p><i></i> root 操作审计已开启</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="trust-strip" aria-label="版本特性">
+      <span>Debian Linux</span>
+      <span>UEFI 启动</span>
+      <span>可安装 ISO</span>
+      <span>QEMU 验证通过</span>
+      <span>SHA-256 校验</span>
+    </section>
+
+    <section class="install-section" id="install">
+      <div class="section-heading">
+        <p class="eyebrow"><span></span> 三步开始</p>
+        <h2>下载，然后启动</h2>
+        <p>不需要编译代码。推荐先在 VMware、VirtualBox、UTM 或 QEMU 中体验。</p>
+      </div>
+      <div class="steps">
+        <article>
+          <span class="step-number">01</span>
+          <h3>下载 ISO</h3>
+          <p>点击页面顶部的下载按钮，获得完整的 AegisOS 系统镜像。</p>
+        </article>
+        <article>
+          <span class="step-number">02</span>
+          <h3>创建虚拟机</h3>
+          <p>选择 Linux 64 位、2 GB 内存和 8 GB 以上磁盘，并挂载下载的 ISO。</p>
+        </article>
+        <article>
+          <span class="step-number">03</span>
+          <h3>启动系统</h3>
+          <p>选择 Live 直接体验，或选择 Install AegisOS 安装到虚拟磁盘。</p>
+        </article>
+      </div>
+      <div class="credentials">
+        <div>
+          <small>LIVE 用户名</small>
+          <code>aegis-live</code>
+        </div>
+        <div>
+          <small>LIVE 密码</small>
+          <code>aegisos</code>
+        </div>
+        <p>安装时系统会要求创建你自己的管理员账户。</p>
+      </div>
+    </section>
+
+    <section class="about-section" id="about">
+      <div class="about-copy">
+        <p class="eyebrow"><span></span> 系统能力</p>
+        <h2>不是聊天窗口，<br>而是系统的一部分</h2>
+        <p>
+          AegisOS 的 Agent 和 Guardian 能读取系统状态、管理服务、安装软件包并执行命令。
+          每次 root 操作都会写入审计记录，并提供本地紧急停止开关。
+        </p>
+      </div>
+      <div class="feature-list">
+        <div><strong>01</strong><span>持续监控磁盘、内存、进程、日志和网络</span></div>
+        <div><strong>02</strong><span>支持 OpenAI 兼容的云端或本地模型接口</span></div>
+        <div><strong>03</strong><span>提供 Agent 与 Guardian 双运行时</span></div>
+        <div><strong>04</strong><span>支持签名更新、快照与回滚工具</span></div>
+      </div>
+    </section>
+
+    <section class="notice">
+      <div>
+        <strong>开发者预览版</strong>
+        <p>
+          当前镜像不内置 AI 模型，安装后需要配置模型接口。AI 服务拥有 root 权限，
+          不要在存有重要资料、密码或生产业务的电脑上使用。
+        </p>
+      </div>
+      <a href="https://github.com/lmenghao6-png/ai-native-kernel/blob/main/SECURITY.md">查看安全说明</a>
+    </section>
+  </main>
+
+  <footer>
+    <a class="brand" href="./">
+      <span class="brand-mark" aria-hidden="true">A</span>
+      <span>AegisOS</span>
+    </a>
+    <p>AI-operated Linux for research and evaluation.</p>
+    <div>
+      <a href="https://github.com/lmenghao6-png/ai-native-kernel/releases/tag/preview-0.3-dev">发布记录</a>
+      <a href="https://github.com/lmenghao6-png/ai-native-kernel">GitHub</a>
+    </div>
+  </footer>
+</body>
+</html>

@@ -12,6 +12,7 @@ distribution, installer, root AI runtime, and signed release/update toolchain.
 The current build is an unsigned Developer Preview for disposable VMs and test
 hardware:
 
+- [Open the AegisOS download website](https://lmenghao6-png.github.io/ai-native-kernel/)
 - [AegisOS 0.3 Developer Preview release](https://github.com/lmenghao6-png/ai-native-kernel/releases/tag/preview-0.3-dev)
 - [Download the amd64 ISO](https://github.com/lmenghao6-png/ai-native-kernel/releases/download/preview-0.3-dev/aegisos-0.3-dev.iso)
 - [Download SHA256SUMS](https://github.com/lmenghao6-png/ai-native-kernel/releases/download/preview-0.3-dev/SHA256SUMS)
