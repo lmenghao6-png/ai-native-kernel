@@ -19,46 +19,86 @@ W('/usr/local/bin/aegisctl', '''#!/bin/bash
 case "${1:-}" in
     status)
         echo "AegisOS @VERSION@ | Kernel $(uname -r)"
-        systemctl is-active aegisosd 2>/dev/null && echo "aegisosd: running" || echo "aegisosd: stopped"
+        systemctl is-active aegisosd 2>/dev/null && echo "root AI: running" || echo "root AI: stopped"
         systemctl is-active guardian 2>/dev/null && echo "guardian: running" || echo "guardian: stopped"
+        test -e /etc/aegisos/agent-disabled && echo "emergency stop: engaged" || echo "emergency stop: clear"
         ;;
     doctor)
-        for svc in aegisosd guardian ssh; do
+        for svc in aegisosd guardian ssh auditd; do
             systemctl is-active "$svc" 2>/dev/null && echo "[OK] $svc" || echo "[!!] $svc"
         done
+        test "$(systemctl show -p User --value aegisosd)" = "" &&
+            echo "[OK] root AI identity" || echo "[!!] root AI identity"
         df -h / | awk 'NR==2{print "Disk: " $5 " used"}'
         free -h | awk '/Mem:/{print "Memory: " $3 "/" $2}'
         ;;
     logs) journalctl -u aegisosd -u guardian --no-pager -n "${2:-50}" -f ;;
-    update) sudo apt update && sudo apt upgrade -y ;;
-    *) echo "Usage: aegisctl {status|doctor|logs|update}" ;;
+    root-audit) sudo tail -n "${2:-50}" /var/log/aegisos/root-actions.jsonl ;;
+    update)
+        shift
+        test $# -ge 1 || { echo "Usage: aegisctl update MANIFEST [SIGNATURE]" >&2; exit 2; }
+        if test $# -ge 2; then
+            sudo aegis-update apply "$1" --signature "$2"
+        else
+            sudo aegis-update apply "$1"
+        fi
+        ;;
+    rollback) sudo aegis-update rollback ;;
+    ai-stop)
+        sudo install -m 600 /dev/null /etc/aegisos/agent-disabled
+        sudo systemctl stop aegisosd guardian
+        echo "Root AI emergency stop engaged."
+        ;;
+    ai-start)
+        sudo rm -f /etc/aegisos/agent-disabled
+        sudo systemctl start aegisosd guardian
+        echo "Root AI emergency stop cleared."
+        ;;
+    *) echo "Usage: aegisctl {status|doctor|logs|root-audit|update|rollback|ai-stop|ai-start}" ;;
 esac
 '''.replace('@VERSION@', VERSION), 0o755)
 W('/usr/local/bin/ai-console', '''#!/usr/bin/env python3
-import json, os, subprocess, sys
-CONFIG='/etc/aegisos/ai-agent.conf'
-MODEL='/usr/local/share/aegisos/models/qwen2.5-0.5b-q4_k_m.gguf'
-LLAMA='/usr/local/libexec/aegisos/llama-cli'
-def key():
-    if not os.path.exists(CONFIG): return ''
-    for l in open(CONFIG):
-        if l.startswith('key=') or l.startswith('key ='):
-            return l.split('=',1)[1].strip()
-    return ''
-def cloud(p):
+import configparser, json, os, subprocess, sys
+from urllib.parse import urlparse
+CONFIG=os.environ.get('AEGISOS_AI_CONFIG','/etc/aegisos/ai-agent.conf')
+MODEL=os.environ.get('AEGISOS_MODEL','/usr/local/share/aegisos/models/qwen2.5-0.5b-q4_k_m.gguf')
+LLAMA=os.environ.get('AEGISOS_LLAMA','/usr/local/libexec/aegisos/llama-cli')
+DEFAULT_ENDPOINT='https://api.deepseek.com/v1'
+def settings():
+    c=configparser.ConfigParser()
+    c.read(CONFIG)
+    api=c['api'] if c.has_section('api') else {}
+    return {
+        'endpoint':api.get('endpoint',DEFAULT_ENDPOINT).rstrip('/'),
+        'model':api.get('model','deepseek-chat'),
+        'key':api.get('key',''),
+        'local_enabled':api.get('local_model_enabled','true').lower() in ('true','yes','1'),
+    }
+def cloud_available(s):
+    return bool(s['key']) or urlparse(s['endpoint']).hostname in ('localhost','127.0.0.1','::1')
+def cloud(p,s):
     import urllib.request
-    b = json.dumps({'model':'deepseek-chat','messages':[{'role':'user','content':p}],'temperature':0.7,'max_tokens':1024}).encode()
-    r = urllib.request.Request('https://api.deepseek.com/v1/chat/completions',data=b,headers={'Content-Type':'application/json','Authorization':'Bearer '+key()},method='POST')
+    endpoint=s['endpoint']
+    if not endpoint.endswith('/chat/completions'): endpoint += '/chat/completions'
+    b=json.dumps({'model':s['model'],'messages':[{'role':'user','content':p}],'temperature':0.7,'max_tokens':1024}).encode()
+    headers={'Content-Type':'application/json'}
+    if s['key']: headers['Authorization']='Bearer '+s['key']
+    r=urllib.request.Request(endpoint,data=b,headers=headers,method='POST')
     return json.loads(urllib.request.urlopen(r,timeout=60).read())['choices'][0]['message']['content']
 def local(p):
     m = '<|im_start|>user\\n'+p+'<|im_end|>\\n<|im_start|>assistant\\n'
     return subprocess.run([LLAMA,'-m',MODEL,'-p',m,'-n','256','--temp','0.7','--no-display-prompt','--log-disable'],capture_output=True,text=True,timeout=60).stdout.strip()
+def ask(p):
+    s=settings()
+    if cloud_available(s):
+        try: return cloud(p,s)
+        except Exception:
+            if not (s['local_enabled'] and os.path.exists(MODEL) and os.access(LLAMA,os.X_OK)): raise
+    if s['local_enabled'] and os.path.exists(MODEL) and os.access(LLAMA,os.X_OK): return local(p)
+    return 'No AI backend. Configure an API key, a local endpoint, or a local model.'
 if len(sys.argv)>1:
     p=' '.join(sys.argv[1:])
-    try:
-        if key(): print(cloud(p))
-        elif os.path.exists(MODEL): print(local(p))
-        else: print('No AI backend. Configure API key.')
+    try: print(ask(p))
     except Exception as e: print('Error: '+str(e))
 else:
     print('AegisOS AI Console @VERSION@')
@@ -67,63 +107,55 @@ else:
         except (EOFError,KeyboardInterrupt): break
         if c in ('/exit','/quit'): break
         if c=='/help': print('/status /doctor /help /exit'); continue
-        try:
-            if key(): print(cloud(c))
-            elif os.path.exists(MODEL): print(local(c))
-            else: print('No AI configured.')
+        if not c: continue
+        try: print(ask(c))
         except Exception as e: print('Error: '+str(e))
 '''.replace('@VERSION@', VERSION), 0o755)
 with open(os.path.join(SCRIPT_DIR, 'aegisos-install.sh')) as installer:
     W('/usr/local/bin/aegisos-install', installer.read(), 0o755)
-service_hardening = '''User=aegis
-Group=aegis
-SupplementaryGroups=adm systemd-journal
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictSUIDSGID=true
-LockPersonality=true
-CapabilityBoundingSet=
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-ReadWritePaths=/var/lib/aegisos /var/log/aegisos /run/aegisos
+for source, destination, mode in (
+    ('aegis-update.py', '/usr/local/bin/aegis-update', 0o755),
+    ('aegis-uninstall.sh', '/usr/local/sbin/aegis-uninstall', 0o755),
+):
+    with open(os.path.join(SCRIPT_DIR, source)) as handle:
+        W(destination, handle.read(), mode)
+root_service = '''UMask=0077
+Environment=PYTHONUNBUFFERED=1
 '''
 W('/etc/systemd/system/aegisosd.service', f'''[Unit]
-Description=AegisOS Agent Daemon
+Description=AegisOS Root AI Agent
 After=network.target
+ConditionPathExists=!/etc/aegisos/agent-disabled
 
 [Service]
 Type=simple
 ExecStart=/usr/bin/python3 /usr/local/lib/aegisos/framework.py
 WorkingDirectory=/usr/local/lib/aegisos
-Restart=always
+Restart=on-failure
 RestartSec=10
-Environment=PYTHONUNBUFFERED=1
-{service_hardening}
+{root_service}
 [Install]
 WantedBy=multi-user.target
 ''')
 W('/etc/systemd/system/guardian.service', f'''[Unit]
-Description=Aegis Guardian Monitor
+Description=Aegis Root Guardian Monitor
 After=network.target
+ConditionPathExists=!/etc/aegisos/agent-disabled
 
 [Service]
 Type=simple
 ExecStart=/usr/bin/python3 /usr/local/lib/aegisos/guardian.py
 WorkingDirectory=/usr/local/lib/aegisos
-Restart=always
+Restart=on-failure
 RestartSec=30
-Environment=PYTHONUNBUFFERED=1
-{service_hardening}
+{root_service}
 [Install]
 WantedBy=multi-user.target
 ''')
-W('/usr/lib/tmpfiles.d/aegisos.conf', '''d /run/aegisos 0750 aegis aegis -
-d /var/lib/aegisos 0750 aegis aegis -
-d /var/log/aegisos 0750 aegis aegis -
+W('/usr/lib/tmpfiles.d/aegisos.conf', '''d /run/aegisos 0700 root root -
+d /var/lib/aegisos 0700 root root -
+d /var/log/aegisos 0700 root root -
+f /var/log/aegisos/root-actions.jsonl 0600 root root -
 ''')
 W('/etc/systemd/system/aegisos-installer.service', '''[Unit]
 Description=AegisOS Installer

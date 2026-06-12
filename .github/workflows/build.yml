@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 jobs:
-  build-bastion:
-    name: Build Bastion Kernel
+  test:
+    name: Test Linux Distribution
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -22,39 +22,15 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: test "v$(tr -d '[:space:]' < VERSION)" = "$GITHUB_REF_NAME"
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq clang lld llvm make git cpio
-
-      - name: Run Python tests
+      - name: Run Python and policy tests
         run: make test-python
 
-      - name: Build Bastion kernel
-        run: |
-          make all -j$(nproc)
-          ls -lh build/aikernel.elf
-          ls -lh build/initramfs.cpio
-
-      - name: QEMU boot test
-        run: |
-          sudo apt-get install -y -qq qemu-system-x86 ovmf
-          make fat
-          bash tools/test-bastion-boot.sh
-
-      - name: Upload kernel artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: bastion-kernel
-          path: |
-            build/aikernel.elf
-            build/initramfs.cpio
-            build/bastion-boot.log
-
   build-distro:
-    name: Build AegisOS Distribution
+    name: Build and Install AegisOS
     runs-on: ubuntu-24.04
-    needs: build-bastion
+    needs: test
+    env:
+      AEGISOS_RELEASE_PUBLIC_KEY_B64: ${{ secrets.AEGISOS_RELEASE_PUBLIC_KEY_B64 }}
     steps:
       - uses: actions/checkout@v6
 
@@ -62,31 +38,55 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq debian-archive-keyring mmdebstrap squashfs-tools grub-pc-bin \
-            grub-efi-amd64-bin xorriso mtools parted dosfstools rsync expect
+            grub-efi-amd64-bin xorriso mtools parted dosfstools rsync expect \
+            qemu-system-x86 qemu-utils ovmf
 
-      - name: Build rootfs
+      - name: Require release trust anchor
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: test -n "$AEGISOS_RELEASE_PUBLIC_KEY_B64"
+
+      - name: Build rootfs and ISO
         run: |
           set -o pipefail
-          sudo bash tools/build-aegisos-rootfs.sh 2>&1 | tail -20
-
-      - name: Build ISO
-        run: |
+          sudo bash tools/build-aegisos-rootfs.sh 2>&1 | tail -30
           bash tools/build-aegisos-image.sh
 
+      - name: Verify image checksums
+        run: (cd build/aegisos/image && sha256sum --check SHA256SUMS)
+
       - name: QEMU ISO boot test
-        run: |
-          sudo apt-get install -y -qq qemu-system-x86 qemu-utils ovmf
-          expect tools/test-aegisos-iso.exp
+        run: expect tools/test-aegisos-iso.exp
 
       - name: QEMU install and reboot test
         run: expect tools/test-aegisos-install.exp
 
+      - name: Build signed application update
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          AEGISOS_RELEASE_PRIVATE_KEY: ${{ secrets.AEGISOS_RELEASE_PRIVATE_KEY }}
+        run: |
+          test -n "$AEGISOS_RELEASE_PRIVATE_KEY"
+          printf '%s' "$AEGISOS_RELEASE_PRIVATE_KEY" | gpg --batch --import
+          signing_key="$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "sec" { print $5; exit }')"
+          test -n "$signing_key"
+          AEGISOS_SIGNING_KEY="$signing_key" bash tools/build-release-bundle.sh
+          gpg --batch --yes --local-user "$signing_key" \
+            --output build/aegisos/image/SHA256SUMS.sig \
+            --detach-sign build/aegisos/image/SHA256SUMS
+          gpg --batch --yes --local-user "$signing_key" \
+            --output build/aegisos/image/release-manifest.json.sig \
+            --detach-sign build/aegisos/image/release-manifest.json
+
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v7
         with:
-          name: aegisos-developer-preview-iso
+          name: aegisos-linux-iso
           path: |
             build/aegisos/image/aegisos-*.iso
+            build/aegisos/image/SHA256SUMS
+            build/aegisos/image/release-manifest.json
+            build/aegisos/image/*.sig
+            build/aegisos/update/*
             build/aegisos/iso-boot-test.log
             build/aegisos/install-test.log
 
@@ -94,13 +94,13 @@ jobs:
     name: Create Release
     runs-on: ubuntu-24.04
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-bastion, build-distro]
+    needs: build-distro
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: aegisos-developer-preview-iso
+          name: aegisos-linux-iso
           path: release
 
       - name: Create Release
@@ -108,19 +108,14 @@ jobs:
         with:
           files: |
             release/image/aegisos-*.iso
+            release/image/SHA256SUMS
+            release/image/release-manifest.json
+            release/image/*.sig
+            release/update/*
           fail_on_unmatched_files: true
           body: |
             AegisOS ${{ github.ref_name }}
-            
-            ## What's included
-            - AI Console with OpenAI-compatible API support
-            - Agent Framework (5 sensors + 3 actors)
-            - Bastion v0.3 kernel (VFS + initramfs + ELF loader)
-            - Guided installer
-            - Development tools (git, gcc, make, vim, htop)
-            
-            ## Quick start
-            1. Write ISO to USB: `dd if=aegisos-*.iso of=/dev/sdX bs=4M`
-            2. Boot in UEFI mode
-            3. Select "Install AegisOS to Disk" in GRUB
-            4. Create a unique administrator account when prompted
+
+            Debian-based AI Linux distribution with a root-capable autonomous
+            agent, Guardian monitoring, guided installation, audit logging,
+            signed application updates, backup, and rollback.

@@ -42,6 +42,7 @@ sudo,passwd,adduser,locales,hostname, \
 netbase,iproute2,iputils-ping,wget,curl,ca-certificates, \
 openssh-server,openssh-client, \
 ufw, \
+auditd,apparmor,apparmor-utils,gpgv, \
 python3,python3-pip, \
 git,gcc,make,vim,htop, \
 grub2-common,grub-pc-bin,grub-efi-amd64-bin, \
@@ -65,12 +66,9 @@ sudo mkdir -p "$ROOTFS/var/lib/aegisos"
 sudo mkdir -p "$ROOTFS/var/log/aegisos"
 sudo mkdir -p "$ROOTFS/run/aegisos"
 sudo mkdir -p "$ROOTFS/etc/network"
-sudo chroot "$ROOTFS" useradd --system --home /var/lib/aegisos \
-    --shell /usr/sbin/nologin --user-group aegis
-sudo chroot "$ROOTFS" usermod -a -G adm,systemd-journal aegis
-sudo chroot "$ROOTFS" chown -R aegis:aegis \
+sudo chroot "$ROOTFS" chown -R root:root \
     /var/lib/aegisos /var/log/aegisos /run/aegisos
-sudo chroot "$ROOTFS" chmod 0750 \
+sudo chroot "$ROOTFS" chmod 0700 \
     /var/lib/aegisos /var/log/aegisos /run/aegisos
 sudo chroot "$ROOTFS" useradd --create-home --shell /bin/bash \
     --groups sudo aegis-live
@@ -105,17 +103,35 @@ local_model_enabled = true
 
 [agent]
 tick_interval = 10
+privilege_mode = root
+CONFEOF
 
+sudo tee "$ROOTFS/etc/aegisos/guardian.conf" > /dev/null << 'CONFEOF'
 [guardian]
 enabled = true
 interval = 60
-auto_execute_safe = true
+auto_execute_root = true
 goals = Keep the system secure and stable. Monitor disk space, memory, and service health.
 CONFEOF
 echo "$AEGISOS_VERSION" | sudo tee "$ROOTFS/etc/aegisos/version" > /dev/null
-sudo chroot "$ROOTFS" chown root:aegis /etc/aegisos/ai-agent.conf
-sudo chmod 640 "$ROOTFS/etc/aegisos/ai-agent.conf"
-sudo chmod 644 "$ROOTFS/etc/aegisos/version"
+echo "2" | sudo tee "$ROOTFS/etc/aegisos/config-schema" > /dev/null
+sudo chroot "$ROOTFS" chown root:root /etc/aegisos/ai-agent.conf
+sudo chroot "$ROOTFS" chown root:root /etc/aegisos/guardian.conf
+sudo chmod 600 \
+    "$ROOTFS/etc/aegisos/ai-agent.conf" \
+    "$ROOTFS/etc/aegisos/guardian.conf"
+sudo chmod 644 \
+    "$ROOTFS/etc/aegisos/version" \
+    "$ROOTFS/etc/aegisos/config-schema"
+
+if [[ -n "${AEGISOS_RELEASE_PUBLIC_KEY:-}" ]]; then
+    sudo install -Dm644 "$AEGISOS_RELEASE_PUBLIC_KEY" \
+        "$ROOTFS/usr/share/keyrings/aegisos-release.gpg"
+elif [[ -n "${AEGISOS_RELEASE_PUBLIC_KEY_B64:-}" ]]; then
+    printf '%s' "$AEGISOS_RELEASE_PUBLIC_KEY_B64" | base64 -d | \
+        sudo tee "$ROOTFS/usr/share/keyrings/aegisos-release.gpg" > /dev/null
+    sudo chmod 644 "$ROOTFS/usr/share/keyrings/aegisos-release.gpg"
+fi
 
 sudo rm -f "$ROOTFS/etc/os-release"
 sudo tee "$ROOTFS/etc/os-release" > /dev/null <<EOF
@@ -147,6 +163,33 @@ sudo sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication no/' "$ROOTFS
 sudo sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' "$ROOTFS/etc/ssh/sshd_config" 2>/dev/null || true
 sudo chmod 600 "$ROOTFS"/etc/ssh/ssh_host_*_key 2>/dev/null || true
 sudo chmod 644 "$ROOTFS"/etc/ssh/ssh_host_*_key.pub 2>/dev/null || true
+
+# Firewall: default deny incoming traffic and allow key-only SSH access.
+sudo chroot "$ROOTFS" ufw default deny incoming
+sudo chroot "$ROOTFS" ufw default allow outgoing
+sudo chroot "$ROOTFS" ufw allow 22/tcp
+sudo sed -i 's/^ENABLED=.*/ENABLED=yes/' "$ROOTFS/etc/ufw/ufw.conf"
+
+# Audit root AI execution and changes to its code or configuration.
+sudo tee "$ROOTFS/etc/audit/rules.d/aegisos.rules" > /dev/null <<'EOF'
+-w /usr/local/lib/aegisos/ -p wa -k aegisos_code
+-w /etc/aegisos/ -p wa -k aegisos_config
+-w /var/log/aegisos/root-actions.jsonl -p wa -k aegisos_root_actions
+-w /etc/systemd/system/aegisosd.service -p wa -k aegisos_service
+-w /etc/systemd/system/guardian.service -p wa -k aegisos_service
+EOF
+sudo chmod 640 "$ROOTFS/etc/audit/rules.d/aegisos.rules"
+
+sudo tee "$ROOTFS/etc/logrotate.d/aegisos" > /dev/null <<'EOF'
+/var/log/aegisos/*.log /var/log/aegisos/*.jsonl {
+    weekly
+    rotate 12
+    compress
+    missingok
+    notifempty
+    create 0600 root root
+}
+EOF
 
 # MOTD banner
 sudo tee "$ROOTFS/etc/motd" > /dev/null << 'MOTDEOF'

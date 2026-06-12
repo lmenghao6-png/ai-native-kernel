@@ -6,6 +6,7 @@ MOUNT_ROOT="${AEGISOS_MOUNT_ROOT:-/mnt/aegisos-target}"
 TARGET_DISK=""
 ADMIN_USER=""
 ADMIN_PASSWORD=""
+ADMIN_SSH_KEY=""
 
 partition_path() {
     local disk="$1"
@@ -103,8 +104,21 @@ validate_admin_password() {
     }
 }
 
+validate_ssh_public_key() {
+    local key="$1"
+
+    [[ "$key" != *$'\n'* && "$key" != *$'\r'* ]] || {
+        echo "SSH public key must be a single line." >&2
+        return 1
+    }
+    [[ "$key" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-nistp256@openssh.com)[[:space:]][A-Za-z0-9+/=]+([[:space:]].*)?$ ]] || {
+        echo "Unsupported or malformed SSH public key." >&2
+        return 1
+    }
+}
+
 read_admin_credentials() {
-    local confirmation
+    local confirmation key_input
 
     if [[ -n "${AEGISOS_ADMIN_USER:-}" ||
           -n "${AEGISOS_ADMIN_PASSWORD:-}" ]]; then
@@ -129,6 +143,16 @@ read_admin_credentials() {
 
     validate_admin_username "$ADMIN_USER"
     validate_admin_password "$ADMIN_PASSWORD"
+
+    if [[ -n "${AEGISOS_ADMIN_SSH_KEY:-}" ]]; then
+        ADMIN_SSH_KEY="$AEGISOS_ADMIN_SSH_KEY"
+    elif [[ -t 0 ]]; then
+        read -r -p "Administrator SSH public key (optional): " key_input
+        ADMIN_SSH_KEY="$key_input"
+    fi
+    if [[ -n "$ADMIN_SSH_KEY" ]]; then
+        validate_ssh_public_key "$ADMIN_SSH_KEY"
+    fi
 }
 
 configure_target_accounts() {
@@ -148,6 +172,19 @@ configure_target_accounts() {
     printf '%s:%s\n' "$ADMIN_USER" "$ADMIN_PASSWORD" |
         chroot "$MOUNT_ROOT" chpasswd
     chroot "$MOUNT_ROOT" passwd --lock root
+    if [[ -n "$ADMIN_SSH_KEY" ]]; then
+        chroot "$MOUNT_ROOT" install -d -m 700 \
+            -o "$ADMIN_USER" -g "$ADMIN_USER" \
+            "/home/$ADMIN_USER/.ssh"
+        printf '%s\n' "$ADMIN_SSH_KEY" > \
+            "$MOUNT_ROOT/home/$ADMIN_USER/.ssh/authorized_keys"
+        chroot "$MOUNT_ROOT" chown "$ADMIN_USER:$ADMIN_USER" \
+            "/home/$ADMIN_USER/.ssh/authorized_keys"
+        chroot "$MOUNT_ROOT" chmod 600 \
+            "/home/$ADMIN_USER/.ssh/authorized_keys"
+    fi
+    install -Dm600 /dev/null \
+        "$MOUNT_ROOT/var/lib/aegisos/firstboot-complete"
 }
 
 write_fstab() {
@@ -267,7 +304,7 @@ install_system() {
     ln -s /etc/machine-id "$MOUNT_ROOT/var/lib/dbus/machine-id"
     rm -f "$MOUNT_ROOT"/etc/ssh/ssh_host_*
     chroot "$MOUNT_ROOT" ssh-keygen -A
-    chroot "$MOUNT_ROOT" systemctl enable aegisosd guardian ssh ufw
+    chroot "$MOUNT_ROOT" systemctl enable aegisosd guardian ssh ufw auditd
 
     sync
     cleanup
@@ -290,6 +327,14 @@ main() {
             exit 2
         }
         validate_admin_username "$2"
+        exit 0
+    fi
+    if [[ "${1:-}" == "--validate-ssh-key" ]]; then
+        [[ $# -eq 2 ]] || {
+            echo "Usage: $0 --validate-ssh-key PUBLIC_KEY" >&2
+            exit 2
+        }
+        validate_ssh_public_key "$2"
         exit 0
     fi
 
@@ -332,6 +377,7 @@ main() {
     read_admin_credentials
     install_system "$TARGET_DISK"
     ADMIN_PASSWORD=""
+    ADMIN_SSH_KEY=""
     trap - EXIT INT TERM
     echo "AegisOS installation completed successfully for $ADMIN_USER."
 

@@ -9,6 +9,7 @@ set ovmf "/usr/share/ovmf/OVMF.fd"
 set log_path "build/aegisos/install-test.log"
 set admin_user "aegisadmin"
 set admin_password "AegisOS-Test-2026"
+set admin_ssh_key "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHycMH0+K6FQoCemw1/ocvIV4ppfapJ1H61UrIykyiBP aegisos-install-test"
 
 proc fail {message} {
     puts stderr $message
@@ -63,6 +64,10 @@ expect {
     timeout { fail "Timed out waiting for password confirmation" }
 }
 expect {
+    "Administrator SSH public key (optional):" { send "$admin_ssh_key\r" }
+    timeout { fail "Timed out waiting for SSH public key prompt" }
+}
+expect {
     "Power off now?" { send "y\r" }
     timeout { fail "AegisOS installation did not complete" }
 }
@@ -105,10 +110,30 @@ expect {
     "AEGISOS_ACCOUNTS_OK" {}
     timeout { fail "Installed credentials were not hardened" }
 }
-send "systemctl is-active --quiet aegisosd guardian ssh && test -z \"\$(systemctl --failed --no-legend --plain)\" && echo AEGISOS_INSTALLED_SERVICES_OK\r"
+send "test -s ~/.ssh/authorized_keys && grep -q 'aegisos-install-test' ~/.ssh/authorized_keys && printf '%s\\n' '$admin_password' | sudo -S test -e /var/lib/aegisos/firstboot-complete && echo AEGISOS_SSH_KEY_OK\r"
+expect {
+    "AEGISOS_SSH_KEY_OK" {}
+    timeout { fail "Installed SSH key or first-boot state is missing" }
+}
+send "systemctl is-active --quiet aegisosd guardian ssh auditd && test -z \"\$(systemctl --failed --no-legend --plain)\" && test -z \"\$(systemctl show -p User --value aegisosd)\" && test -z \"\$(systemctl show -p User --value guardian)\" && echo AEGISOS_INSTALLED_SERVICES_OK\r"
 expect {
     "AEGISOS_INSTALLED_SERVICES_OK" {}
     timeout { fail "Installed services are unhealthy" }
+}
+send "printf '%s\\n' '$admin_password' | sudo -S aegisctl ai-stop >/dev/null && printf '%s\\n' '$admin_password' | sudo -S test -e /etc/aegisos/agent-disabled && ! systemctl is-active --quiet aegisosd && ! systemctl is-active --quiet guardian && echo AEGISOS_AI_STOP_OK\r"
+expect {
+    "AEGISOS_AI_STOP_OK" {}
+    timeout { fail "Root AI emergency stop did not stop the services" }
+}
+send "printf '%s\\n' '$admin_password' | sudo -S aegisctl ai-start >/dev/null && printf '%s\\n' '$admin_password' | sudo -S sh -c 'test ! -e /etc/aegisos/agent-disabled' && systemctl is-active --quiet aegisosd guardian && echo AEGISOS_AI_START_OK\r"
+expect {
+    "AEGISOS_AI_START_OK" {}
+    timeout { fail "Root AI emergency stop did not recover the services" }
+}
+send "printf '%s\\n' '$admin_password' | sudo -S ufw status | grep -q '^Status: active' && echo AEGISOS_INSTALLED_FIREWALL_OK\r"
+expect {
+    "AEGISOS_INSTALLED_FIREWALL_OK" {}
+    timeout { fail "Installed firewall is not active" }
 }
 send "printf '%s\\n' '$admin_password' | sudo -S poweroff\r"
 expect {

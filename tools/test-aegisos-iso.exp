@@ -47,7 +47,7 @@ expect {
     }
 }
 
-send "systemctl is-active --quiet aegisosd guardian ssh && echo AEGISOS_SERVICES_OK\r"
+send "systemctl is-active --quiet aegisosd guardian ssh auditd && echo AEGISOS_SERVICES_OK\r"
 expect {
     "AEGISOS_SERVICES_OK" {}
     timeout {
@@ -56,11 +56,11 @@ expect {
     }
 }
 
-send "test \"\$(systemctl show -p User --value aegisosd)\" = aegis && test \"\$(systemctl show -p User --value guardian)\" = aegis && echo AEGISOS_UNPRIVILEGED_OK\r"
+send "test -z \"\$(systemctl show -p User --value aegisosd)\" && test -z \"\$(systemctl show -p User --value guardian)\" && echo AEGISOS_ROOT_AI_OK\r"
 expect {
-    "AEGISOS_UNPRIVILEGED_OK" {}
+    "AEGISOS_ROOT_AI_OK" {}
     timeout {
-        puts stderr "Agent services are not running as aegis"
+        puts stderr "AI services are not running as root"
         exit 1
     }
 }
@@ -70,6 +70,15 @@ expect {
     "AEGISOS_NO_FAILED_UNITS" {}
     timeout {
         puts stderr "AegisOS has failed systemd units"
+        exit 1
+    }
+}
+
+send "sudo -n ufw status | grep -q '^Status: active' && echo AEGISOS_FIREWALL_OK\r"
+expect {
+    "AEGISOS_FIREWALL_OK" {}
+    timeout {
+        puts stderr "UFW firewall is not active"
         exit 1
     }
 }

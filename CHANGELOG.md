@@ -3,34 +3,37 @@
 ## Unreleased
 
 ### Added
-- Single-source `VERSION` metadata for images, CLI tools, MOTD, and OS identity
-- Installer-time administrator account and password setup
-- Physical page release/reuse with PMM and VMM boot-time self-tests
-- Transactional VMM page mapping with data-page and page-table rollback
-- QEMU integration test that executes a Ring 3 ELF program and verifies exit
-- Python tests for Guardian command policy, Agent action policy, and service hardening
-- Unprivileged `aegis` service account with systemd sandboxing
-- Automated ISO installation and reboot test using a disposable QEMU disk
+- Root Agent and Guardian execution model with all actor and shell capabilities
+- Pre/post root action JSONL records and auditd watches
+- Emergency stop and restart commands through `aegisctl`
+- Optional installer-time administrator SSH public key enrollment
+- GPG-verified application updates with strict manifests and SHA-256 binding
+- Configuration schema migration, snapshots, automatic recovery, rollback,
+  uninstall backup, and purge mode
+- ISO release manifest, checksums, deterministic squashfs timestamps, and
+  external signing-key integration
+- Automated Live ISO and full installation/reboot tests using QEMU
+- End-to-end signed update and rollback test with an ephemeral GPG key
+- Security model and release operator documentation
 
 ### Changed
+- The project now ships only a Debian-based Linux distribution; the Bastion
+  custom kernel, user sample, build targets, CI job, and boot test were removed
+- Agent and Guardian systemd services now run as root by product design
+- Guardian `ROOT_AUTO` commands run directly through a root shell
 - Live images use a removable `aegis-live` account; installed systems remove it
-- ISO build output directories are created safely across root/non-root stages
-- GitHub Actions use Node.js 24-compatible action releases
-- Bastion now consumes real Limine memory map and HHDM responses
-- Initramfs now parses CPIO `newc` archives and constructs the VFS tree
-- ELF loader now validates and maps x86-64 `PT_LOAD` segments
-- Agent and Guardian unattended execution is restricted to read-only diagnostics
+- AI Console and daemons share configured endpoint/model settings and support
+  keyless loopback OpenAI-compatible APIs
+- UFW is enabled by default with incoming traffic denied except for SSH
 - Disk installer now writes UUID-based mounts, supports UEFI fallback and
   BIOS/GPT boot, creates unique SSH host keys, and cleans up failed installs
 
 ### Fixed
 - Distribution CI can build the ISO after the privileged rootfs stage
 - Installed systems no longer inherit a published root password
-- Failed user-page allocations no longer leak pages or advance the virtual address cursor
-- PMM free-page bitmap initialization and VMM CR3 allocation
-- Limine request IDs and request markers
-- GDT/TSS setup, IDT syscall vector mapping, and interrupt-frame register layout
-- User-mode hello program pointer and length handling
+- Guardian boolean configuration, disabled-service restart behavior, and local
+  model fallback after a loopback API failure
+- Unconfigured agents no longer repeatedly call the public default API
 
 ## v0.3-beta (2026-06-05)
 
