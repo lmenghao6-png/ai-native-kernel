@@ -1,31 +1,29 @@
 # AegisOS
 
-AegisOS is a Debian-based AI Linux distribution. It uses the standard Debian
-Linux kernel and gives its built-in Agent and Guardian unrestricted root
-authority over the operating system.
+**让 AI 直接管理 Linux。**
 
-The custom Bastion kernel has been removed. The product is now a Linux
-distribution, installer, root AI runtime, and signed release/update toolchain.
+AegisOS 是一个可以直接启动和安装的 AI 原生 Linux 系统，内置 Agent、
+Guardian、系统监控、自动执行、操作审计和紧急停止功能。
 
-## Download
+## 立即下载
 
-The current build is an unsigned Developer Preview for disposable VMs and test
-hardware:
+### [下载 AegisOS 0.3 系统镜像（AMD64 ISO，397 MB）](https://github.com/lmenghao6-png/ai-native-kernel/releases/download/preview-0.3-dev/aegisos-0.3-dev.iso)
 
-- [Open the AegisOS download website](https://lmenghao6-png.github.io/ai-native-kernel/)
-- [AegisOS 0.3 Developer Preview release](https://github.com/lmenghao6-png/ai-native-kernel/releases/tag/preview-0.3-dev)
-- [Download the amd64 ISO](https://github.com/lmenghao6-png/ai-native-kernel/releases/download/preview-0.3-dev/aegisos-0.3-dev.iso)
-- [Download SHA256SUMS](https://github.com/lmenghao6-png/ai-native-kernel/releases/download/preview-0.3-dev/SHA256SUMS)
+点击上面的链接即可下载，不需要下载源代码，也不需要自己编译。
 
-Verify the ISO before booting:
+推荐先在 VMware、VirtualBox、UTM 或 QEMU 虚拟机中体验：
 
-```bash
-sha256sum --check SHA256SUMS
-```
+1. 新建一台 Linux 64 位虚拟机，分配至少 2 GB 内存和 8 GB 磁盘。
+2. 将下载的 `aegisos-0.3-dev.iso` 设置为启动光盘。
+3. 启动虚拟机，选择 Live 体验或 Install AegisOS 安装。
 
-This preview does not bundle a local model or contain a release trust key.
-Configure a model backend after installation. Do not use it for sensitive or
-irreplaceable data.
+Live 用户名：`aegis-live`<br>
+Live 密码：`aegisos`
+
+当前版本是开发者预览版，不内置 AI 模型。安装后需要配置模型接口。不要在存有
+重要资料、密码或生产业务的电脑上使用。
+
+[查看版本说明和校验文件](https://github.com/lmenghao6-png/ai-native-kernel/releases/tag/preview-0.3-dev)
 
 ## Product Documentation
 
