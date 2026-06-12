@@ -3,7 +3,7 @@
 ## Document Status
 
 - Product: AegisOS
-- Version baseline: `0.3-dev`
+- Version baseline: `0.4-dev`
 - Stage: Developer Preview
 - Last updated: 2026-06-12
 - Product scope: Linux distribution, installer, root AI runtime, operations
@@ -13,11 +13,11 @@
 
 ## Product Summary
 
-AegisOS turns a disposable x86_64 machine or virtual machine into an
-AI-operated Linux node. A configured language model observes system state,
-selects operational actions, and can execute those actions as root. The system
-records root actions, provides an emergency stop, and supports signed updates
-with rollback.
+AegisOS turns a disposable x86_64 machine or virtual machine into a headless
+AI-operated Linux node. A bundled 0.5B language model observes system state,
+selects operational actions, and can execute those actions as root without an
+external API. The system records root actions, provides an emergency stop, and
+supports signed updates with rollback.
 
 The Developer Preview is a research and evaluation product. It is intended to
 test whether a persistent AI operator can diagnose and remediate Linux system
@@ -62,12 +62,12 @@ The Developer Preview is not intended for:
 ## Core User Jobs
 
 1. Install an AI-operated Linux node from a bootable image.
-2. Configure a cloud or loopback OpenAI-compatible model endpoint.
+2. Use the bundled offline model or configure another OpenAI-compatible model.
 3. Ask a model for system information through a local console.
 4. Let the Agent observe system state and execute operational actions.
 5. Let the Guardian periodically detect and remediate system issues.
 6. Inspect what root actions the AI attempted and what each action returned.
-7. Stop both AI services immediately without uninstalling the system.
+7. Stop the model, Agent, and Guardian immediately without uninstalling.
 8. Apply a verified application update and roll back after a failure.
 9. Remove the AI layer while preserving configuration and state backups.
 
@@ -77,7 +77,7 @@ The Developer Preview is not intended for:
 
 - Produce a bootable and installable Debian-based amd64 image.
 - Start a persistent Agent and Guardian as explicit root services.
-- Support an operator-supplied OpenAI-compatible model backend.
+- Bundle a small offline model and support operator-supplied compatible backends.
 - Expose useful Linux observations and root execution capabilities.
 - Record every root action before and after execution.
 - Provide a reliable local emergency stop and restart flow.
@@ -103,7 +103,7 @@ The Developer Preview is not intended for:
 - Guaranteeing that model-generated actions are correct
 - Running arbitrary untrusted model input safely as root
 - Providing multi-user or multi-tenant policy isolation
-- Shipping a production-ready local model in the Developer Preview
+- Shipping a large or production-ready local model in the Developer Preview
 - Hiding root authority behind claims of least privilege
 
 ## Product Principles
@@ -132,15 +132,15 @@ The Developer Preview is not intended for:
 | FR-004 | Create a unique administrator, lock root login, remove Live credentials, and generate host identity. | Implemented |
 | FR-005 | Disable SSH password authentication and enable a default-deny incoming firewall with SSH allowed. | Implemented |
 | FR-006 | Configure cloud or loopback OpenAI-compatible model endpoints without requiring a key for loopback endpoints. | Implemented |
-| FR-007 | Support optional GGUF inference when an operator separately installs `llama-cli` and a compatible model. | Partial |
+| FR-007 | Bundle Qwen2.5-0.5B-Instruct GGUF and a pinned `llama.cpp` runtime for offline inference. | Implemented |
 | FR-008 | Gather disk, process, memory, log, and network observations. | Implemented |
 | FR-009 | Execute Bash, systemd, and APT actions from Agent decisions as root. | Implemented |
 | FR-010 | Periodically evaluate system state and execute Guardian remediation commands as root. | Implemented |
 | FR-011 | Persist observations, actions, goals, and context in SQLite. | Implemented |
 | FR-012 | Append pre-action and post-action records to a private JSONL root-action log. | Implemented |
 | FR-013 | Watch AI code, configuration, service definitions, and action logs with `auditd`. | Implemented |
-| FR-014 | Stop both AI services and prevent restart while an emergency marker exists. | Implemented |
-| FR-015 | Show model-backend readiness and distinguish running services from a usable AI configuration. | Planned |
+| FR-014 | Stop the model, Agent, and Guardian and prevent restart while an emergency marker exists. | Implemented |
+| FR-015 | Show model service and endpoint readiness separately from Agent and Guardian state. | Implemented |
 | FR-016 | Provide a local model console for direct prompts to the configured backend. | Implemented |
 | FR-017 | Provide an interactive operator console that can invoke Agent capabilities and display execution results. | Planned |
 | FR-018 | Verify update manifests with GPG, verify bundle SHA-256, migrate configuration, snapshot state, and roll back. | Implemented |
@@ -156,7 +156,7 @@ The Developer Preview is not intended for:
 2. Boot the Live image.
 3. Log in with the published Live account.
 4. Confirm service, firewall, and audit status.
-5. Configure a test model backend or leave AI execution inactive.
+5. Confirm that the bundled model completes an offline prompt.
 
 ### Install
 
@@ -168,7 +168,7 @@ The Developer Preview is not intended for:
 
 ### Configure and Operate
 
-1. Configure `/etc/aegisos/ai-agent.conf`.
+1. Use the bundled loopback backend or configure `/etc/aegisos/ai-agent.conf`.
 2. Confirm backend readiness.
 3. Inspect `aegisctl status` and `aegisctl doctor`.
 4. Monitor Agent and Guardian logs.
@@ -177,7 +177,7 @@ The Developer Preview is not intended for:
 ### Emergency Stop and Recovery
 
 1. Run `aegisctl ai-stop`.
-2. Confirm that both AI services are inactive and the marker exists.
+2. Confirm that the model, Agent, and Guardian are inactive and the marker exists.
 3. Inspect logs, audit events, and affected system state.
 4. Restore or repair the system.
 5. Run `aegisctl ai-start` only after the initiating input is understood.
@@ -202,8 +202,9 @@ The Developer Preview is not intended for:
 
 - 100% pass rate for Python policy and update tests on the release commit.
 - 100% pass rate for Live ISO boot and full install/reboot tests in QEMU.
-- No failed systemd units at the end of automated boot and installation tests.
+- No unexpected failed systemd units at the end of boot and installation tests.
 - Emergency stop and restart pass on a clean installed VM.
+- The bundled model completes a prompt in a VM with networking disabled.
 - Every tested root action produces paired start and completion or failure
   records.
 - Signed update and rollback tests restore the previous version and managed
@@ -231,9 +232,8 @@ treated as trustworthy.
 
 ### Beta
 
-Requires backend-readiness reporting, operator-facing execution visibility,
-external audit forwarding, offline recovery documentation, and model red-team
-results.
+Requires operator-facing execution visibility, external audit forwarding,
+offline recovery documentation, and model red-team results.
 
 ### Stable
 

@@ -3,27 +3,29 @@
 **让 AI 直接管理 Linux。**
 
 AegisOS 是一个可以直接启动和安装的 AI 原生 Linux 系统，内置 Agent、
-Guardian、系统监控、自动执行、操作审计和紧急停止功能。
+Guardian、Qwen2.5 0.5B 离线模型、系统监控、自动执行、操作审计和紧急停止功能。
+系统不包含图形桌面，启动后直接进入命令行环境。
 
 ## 立即下载
 
-### [下载 AegisOS 0.3 系统镜像（AMD64 ISO，397 MB）](https://github.com/lmenghao6-png/ai-native-kernel/releases/download/preview-0.3-dev/aegisos-0.3-dev.iso)
+### [下载 AegisOS 0.4 系统镜像（AMD64 ISO，846 MB）](https://github.com/lmenghao6-png/ai-native-kernel/releases/download/preview-0.4-dev/aegisos-0.4-dev.iso)
 
 点击上面的链接即可下载，不需要下载源代码，也不需要自己编译。
 
 推荐先在 VMware、VirtualBox、UTM 或 QEMU 虚拟机中体验：
 
 1. 新建一台 Linux 64 位虚拟机，分配至少 2 GB 内存和 8 GB 磁盘。
-2. 将下载的 `aegisos-0.3-dev.iso` 设置为启动光盘。
+2. 将下载的 `aegisos-0.4-dev.iso` 设置为启动光盘。
 3. 启动虚拟机，选择 Live 体验或 Install AegisOS 安装。
 
 Live 用户名：`aegis-live`<br>
 Live 密码：`aegisos`
 
-当前版本是开发者预览版，不内置 AI 模型。安装后需要配置模型接口。不要在存有
-重要资料、密码或生产业务的电脑上使用。
+当前版本是开发者预览版，已内置 `Qwen2.5-0.5B-Instruct Q4_K_M`，无需联网或
+配置 API 密钥即可使用 `ai-console`。不要在存有重要资料、密码或生产业务的
+电脑上使用。
 
-[查看版本说明和校验文件](https://github.com/lmenghao6-png/ai-native-kernel/releases/tag/preview-0.3-dev)
+[查看版本说明和校验文件](https://github.com/lmenghao6-png/ai-native-kernel/releases/tag/preview-0.4-dev)
 
 ## Product Documentation
 
@@ -64,16 +66,20 @@ aegisctl status
 aegisctl ai-start
 ```
 
-The stop command creates `/etc/aegisos/agent-disabled`; both AI units have a
-systemd condition that prevents restart while this marker exists.
+The stop command creates `/etc/aegisos/agent-disabled`; the model, Agent, and
+Guardian units have a systemd condition that prevents restart while this marker
+exists.
 
 ## Components
 
 - Debian bookworm and the Debian Linux kernel
+- Headless command-line environment without a graphical desktop
+- Bundled Qwen2.5-0.5B-Instruct Q4_K_M model for offline inference
+- Pinned llama.cpp runtime exposed only on `127.0.0.1`
 - Root Agent with five sensors and Bash, systemd, and APT actors
 - Root Guardian for periodic monitoring and direct remediation
 - OpenAI-compatible cloud or loopback model endpoints
-- Optional local GGUF inference through `llama-cli`
+- Local GGUF fallback through `llama-cli`
 - SQLite observation, action, goal, and context memory
 - Guided GPT disk installer with UEFI and legacy BIOS boot
 - SSH key-only remote authentication and active UFW default-deny policy
@@ -89,7 +95,7 @@ Boot the ISO in UEFI mode and select `Install AegisOS to Disk`. The installer:
 3. Accepts an optional SSH public key.
 4. Removes the published Live account.
 5. Generates unique SSH host keys.
-6. Enables the root AI, SSH, UFW, and audit services.
+6. Enables the local model, root AI, SSH, UFW, and audit services.
 
 The Live credentials are `aegis-live` / `aegisos`. SSH password authentication
 is disabled in both Live and installed systems.
@@ -112,8 +118,8 @@ Configure the model in `/etc/aegisos/ai-agent.conf`:
 
 ```ini
 [api]
-endpoint = http://127.0.0.1:11434/v1
-model = local-model
+endpoint = http://127.0.0.1:8080/v1
+model = qwen2.5-0.5b-instruct
 key =
 local_model_enabled = false
 
@@ -188,11 +194,13 @@ build/aegisos/image/release-manifest.json
 
 ## Status
 
-The current image is a developer preview. Boot, installation, root AI identity,
-SSH credentials, firewall, audit service, signed update, migration, and rollback
-are automated. The unrestricted root AI model is inherently unsuitable for
-systems where model input is not fully trusted.
+The current image is a developer preview. Boot, installation, bundled offline
+inference, root AI identity, SSH credentials, firewall, audit service, signed
+update, migration, and rollback are automated. The unrestricted root AI model
+is inherently unsuitable for systems where model input is not fully trusted.
 
 ## License
 
-MIT License. See [LICENSE](LICENSE).
+Project code is MIT licensed. The bundled Qwen model and llama.cpp runtime
+retain their upstream Apache-2.0 and MIT licenses; copies are installed in the
+system image under `/usr/local/share/doc/aegisos/`.

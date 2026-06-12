@@ -25,21 +25,21 @@
   <main>
     <section class="hero">
       <div class="hero-copy">
-        <p class="eyebrow"><span></span> AEGISOS 0.3 开发者预览版</p>
+        <p class="eyebrow"><span></span> AEGISOS 0.4 开发者预览版</p>
         <h1>让 AI 直接<br>管理 Linux</h1>
         <p class="hero-text">
           一个可以启动、安装和运行的 AI 原生操作系统。
-          内置 Agent、Guardian、系统监控、自动执行和操作审计。
+          无图形桌面，内置 0.5B 离线模型、Agent、Guardian、自动执行和操作审计。
         </p>
         <div class="download-actions">
           <a class="download-button"
-             href="https://github.com/lmenghao6-png/ai-native-kernel/releases/download/preview-0.3-dev/aegisos-0.3-dev.iso">
+             href="https://github.com/lmenghao6-png/ai-native-kernel/releases/download/preview-0.4-dev/aegisos-0.4-dev.iso">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14"/>
             </svg>
             下载 AegisOS
           </a>
-          <span class="download-meta">AMD64 ISO · 397 MB · 免费</span>
+          <span class="download-meta">AMD64 ISO · 846 MB · 内置离线模型</span>
         </div>
         <p class="recommendation">当前版本推荐安装在虚拟机或闲置测试电脑中。</p>
       </div>
@@ -92,6 +92,7 @@
       <span>Debian Linux</span>
       <span>UEFI 启动</span>
       <span>可安装 ISO</span>
+      <span>0.5B 离线模型</span>
       <span>QEMU 验证通过</span>
       <span>SHA-256 校验</span>
     </section>
@@ -143,7 +144,7 @@
       </div>
       <div class="feature-list">
         <div><strong>01</strong><span>持续监控磁盘、内存、进程、日志和网络</span></div>
-        <div><strong>02</strong><span>支持 OpenAI 兼容的云端或本地模型接口</span></div>
+        <div><strong>02</strong><span>内置 Qwen2.5 0.5B 模型，无需 API 密钥</span></div>
         <div><strong>03</strong><span>提供 Agent 与 Guardian 双运行时</span></div>
         <div><strong>04</strong><span>支持签名更新、快照与回滚工具</span></div>
       </div>
@@ -153,8 +154,8 @@
       <div>
         <strong>开发者预览版</strong>
         <p>
-          当前镜像不内置 AI 模型，安装后需要配置模型接口。AI 服务拥有 root 权限，
-          不要在存有重要资料、密码或生产业务的电脑上使用。
+          当前镜像不含图形桌面，已内置可离线运行的 0.5B 小模型。Agent 和 Guardian
+          拥有 root 权限，不要在存有重要资料、密码或生产业务的电脑上使用。
         </p>
       </div>
       <a href="https://github.com/lmenghao6-png/ai-native-kernel/blob/main/SECURITY.md">查看安全说明</a>
@@ -168,7 +169,7 @@
     </a>
     <p>AI-operated Linux for research and evaluation.</p>
     <div>
-      <a href="https://github.com/lmenghao6-png/ai-native-kernel/releases/tag/preview-0.3-dev">发布记录</a>
+      <a href="https://github.com/lmenghao6-png/ai-native-kernel/releases/tag/preview-0.4-dev">发布记录</a>
       <a href="https://github.com/lmenghao6-png/ai-native-kernel">GitHub</a>
     </div>
   </footer>

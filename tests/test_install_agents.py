@@ -37,6 +37,39 @@ class InstallAgentsTests(unittest.TestCase):
                 )
                 self.assertIn("UMask=0077\n", content)
 
+    def test_bundled_model_service_is_local_and_unprivileged(self):
+        with tempfile.TemporaryDirectory() as rootfs:
+            self.install_tools(rootfs)
+            path = os.path.join(
+                rootfs,
+                "etc/systemd/system/aegisos-model.service",
+            )
+            with open(path) as handle:
+                content = handle.read()
+
+            self.assertIn("DynamicUser=yes\n", content)
+            self.assertIn(
+                "Environment=LD_LIBRARY_PATH=/usr/local/libexec/aegisos/llama-b9603\n",
+                content,
+            )
+            self.assertIn(
+                "WorkingDirectory=/usr/local/libexec/aegisos/llama-b9603\n",
+                content,
+            )
+            self.assertIn("--host 127.0.0.1", content)
+            self.assertIn("--port 8080", content)
+            self.assertIn("--alias qwen2.5-0.5b-instruct", content)
+            self.assertIn("ProtectSystem=strict\n", content)
+            self.assertIn(
+                "ConditionPathExists=!/etc/aegisos/agent-disabled\n",
+                content,
+            )
+            enabled = os.path.join(
+                rootfs,
+                "etc/systemd/system/multi-user.target.wants/aegisos-model.service",
+            )
+            self.assertTrue(os.path.islink(enabled))
+
     def test_tmpfiles_creates_private_runtime_directories(self):
         with tempfile.TemporaryDirectory() as rootfs:
             self.install_tools(rootfs)
@@ -232,6 +265,7 @@ class InstallAgentsTests(unittest.TestCase):
         self.assertIn("Administrator password must be at least 12", installer)
         self.assertIn("authorized_keys", installer)
         self.assertIn("firstboot-complete", installer)
+        self.assertIn("cat /etc/aegisos/version", installer)
 
     def test_rootfs_branding_uses_repository_version(self):
         with open("tools/build-aegisos-rootfs.sh") as handle:
@@ -266,6 +300,29 @@ class InstallAgentsTests(unittest.TestCase):
         )
         self.assertIn("auditd,apparmor,apparmor-utils,gpgv", builder)
         self.assertIn('"$ROOTFS/etc/audit/rules.d/aegisos.rules"', builder)
+        self.assertIn("tools/install-local-model.sh", builder)
+        self.assertIn("endpoint = http://127.0.0.1:8080/v1", builder)
+        self.assertIn("model = qwen2.5-0.5b-instruct", builder)
+        self.assertIn(
+            'chroot "$ROOTFS" systemctl set-default multi-user.target',
+            builder,
+        )
+
+    def test_local_model_downloads_are_pinned_and_verified(self):
+        with open("tools/install-local-model.sh") as handle:
+            installer = handle.read()
+
+        self.assertIn('LLAMA_VERSION="b9603"', installer)
+        self.assertIn(
+            'MODEL_REVISION="df5bf01389a39c743ab467d734bf501681e041c5"',
+            installer,
+        )
+        self.assertIn(
+            'MODEL_SHA256="74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db"',
+            installer,
+        )
+        self.assertIn("sha256sum --check --status", installer)
+        self.assertIn("qwen2.5-0.5b-q4_k_m.gguf", installer)
 
     def test_image_builder_accepts_release_version_formats(self):
         for version in ("1.0", "1.0.0", "1.0-rc.1"):

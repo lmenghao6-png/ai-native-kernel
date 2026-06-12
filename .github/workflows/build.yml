@@ -45,10 +45,16 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: test -n "$AEGISOS_RELEASE_PUBLIC_KEY_B64"
 
+      - name: Cache bundled model and runtime
+        uses: actions/cache@v5
+        with:
+          path: build/aegisos/downloads
+          key: aegisos-local-model-${{ hashFiles('tools/install-local-model.sh') }}
+
       - name: Build rootfs and ISO
         run: |
           set -o pipefail
-          sudo bash tools/build-aegisos-rootfs.sh 2>&1 | tail -30
+          bash tools/build-aegisos-rootfs.sh 2>&1 | tail -30
           bash tools/build-aegisos-image.sh
 
       - name: Verify image checksums

@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Bundled Qwen2.5-0.5B-Instruct Q4_K_M model and pinned llama.cpp runtime
+- Loopback-only local model service with offline health and inference tests
 - Root Agent and Guardian execution model with all actor and shell capabilities
 - Pre/post root action JSONL records and auditd watches
 - Emergency stop and restart commands through `aegisctl`
@@ -17,6 +19,8 @@
 - Security model and release operator documentation
 
 ### Changed
+- Default model configuration now uses the bundled offline endpoint
+- Emergency stop now stops the model service together with Agent and Guardian
 - The project now ships only a Debian-based Linux distribution; the Bastion
   custom kernel, user sample, build targets, CI job, and boot test were removed
 - Agent and Guardian systemd services now run as root by product design

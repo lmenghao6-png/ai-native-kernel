@@ -304,7 +304,8 @@ install_system() {
     ln -s /etc/machine-id "$MOUNT_ROOT/var/lib/dbus/machine-id"
     rm -f "$MOUNT_ROOT"/etc/ssh/ssh_host_*
     chroot "$MOUNT_ROOT" ssh-keygen -A
-    chroot "$MOUNT_ROOT" systemctl enable aegisosd guardian ssh ufw auditd
+    chroot "$MOUNT_ROOT" systemctl enable \
+        aegisos-model aegisosd guardian ssh ufw auditd
 
     sync
     cleanup
@@ -352,7 +353,7 @@ main() {
     trap cleanup EXIT
     trap 'exit 130' INT TERM
     clear
-    echo "=== AegisOS 0.3 Installer ==="
+    echo "=== AegisOS $(cat /etc/aegisos/version 2>/dev/null || echo unknown) Installer ==="
     echo "WARNING: This will erase the selected target disk."
     echo
     lsblk -d -o NAME,SIZE,MODEL,TYPE | awk 'NR == 1 || $NF == "disk"'

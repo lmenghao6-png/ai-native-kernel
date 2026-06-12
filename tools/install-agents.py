@@ -19,20 +19,23 @@ W('/usr/local/bin/aegisctl', '''#!/bin/bash
 case "${1:-}" in
     status)
         echo "AegisOS @VERSION@ | Kernel $(uname -r)"
+        systemctl is-active aegisos-model 2>/dev/null && echo "local model: running" || echo "local model: stopped"
         systemctl is-active aegisosd 2>/dev/null && echo "root AI: running" || echo "root AI: stopped"
         systemctl is-active guardian 2>/dev/null && echo "guardian: running" || echo "guardian: stopped"
         test -e /etc/aegisos/agent-disabled && echo "emergency stop: engaged" || echo "emergency stop: clear"
         ;;
     doctor)
-        for svc in aegisosd guardian ssh auditd; do
+        for svc in aegisos-model aegisosd guardian ssh auditd; do
             systemctl is-active "$svc" 2>/dev/null && echo "[OK] $svc" || echo "[!!] $svc"
         done
+        curl -fsS --max-time 3 http://127.0.0.1:8080/health >/dev/null 2>&1 &&
+            echo "[OK] local model endpoint" || echo "[!!] local model endpoint"
         test "$(systemctl show -p User --value aegisosd)" = "" &&
             echo "[OK] root AI identity" || echo "[!!] root AI identity"
         df -h / | awk 'NR==2{print "Disk: " $5 " used"}'
         free -h | awk '/Mem:/{print "Memory: " $3 "/" $2}'
         ;;
-    logs) journalctl -u aegisosd -u guardian --no-pager -n "${2:-50}" -f ;;
+    logs) journalctl -u aegisos-model -u aegisosd -u guardian --no-pager -n "${2:-50}" -f ;;
     root-audit) sudo tail -n "${2:-50}" /var/log/aegisos/root-actions.jsonl ;;
     update)
         shift
@@ -46,13 +49,13 @@ case "${1:-}" in
     rollback) sudo aegis-update rollback ;;
     ai-stop)
         sudo install -m 600 /dev/null /etc/aegisos/agent-disabled
-        sudo systemctl stop aegisosd guardian
-        echo "Root AI emergency stop engaged."
+        sudo systemctl stop aegisosd guardian aegisos-model
+        echo "AI emergency stop engaged."
         ;;
     ai-start)
         sudo rm -f /etc/aegisos/agent-disabled
-        sudo systemctl start aegisosd guardian
-        echo "Root AI emergency stop cleared."
+        sudo systemctl start aegisos-model aegisosd guardian
+        echo "AI emergency stop cleared."
         ;;
     *) echo "Usage: aegisctl {status|doctor|logs|root-audit|update|rollback|ai-stop|ai-start}" ;;
 esac
@@ -63,14 +66,14 @@ from urllib.parse import urlparse
 CONFIG=os.environ.get('AEGISOS_AI_CONFIG','/etc/aegisos/ai-agent.conf')
 MODEL=os.environ.get('AEGISOS_MODEL','/usr/local/share/aegisos/models/qwen2.5-0.5b-q4_k_m.gguf')
 LLAMA=os.environ.get('AEGISOS_LLAMA','/usr/local/libexec/aegisos/llama-cli')
-DEFAULT_ENDPOINT='https://api.deepseek.com/v1'
+DEFAULT_ENDPOINT='http://127.0.0.1:8080/v1'
 def settings():
     c=configparser.ConfigParser()
     c.read(CONFIG)
     api=c['api'] if c.has_section('api') else {}
     return {
         'endpoint':api.get('endpoint',DEFAULT_ENDPOINT).rstrip('/'),
-        'model':api.get('model','deepseek-chat'),
+        'model':api.get('model','qwen2.5-0.5b-instruct'),
         'key':api.get('key',''),
         'local_enabled':api.get('local_model_enabled','true').lower() in ('true','yes','1'),
     }
@@ -87,7 +90,7 @@ def cloud(p,s):
     return json.loads(urllib.request.urlopen(r,timeout=60).read())['choices'][0]['message']['content']
 def local(p):
     m = '<|im_start|>user\\n'+p+'<|im_end|>\\n<|im_start|>assistant\\n'
-    return subprocess.run([LLAMA,'-m',MODEL,'-p',m,'-n','256','--temp','0.7','--no-display-prompt','--log-disable'],capture_output=True,text=True,timeout=60).stdout.strip()
+    return subprocess.run([LLAMA,'-m',MODEL,'-p',m,'-n','256','--temp','0.7','--single-turn','--simple-io','--no-conversation','--no-display-prompt','--log-disable'],capture_output=True,text=True,timeout=60).stdout.strip()
 def ask(p):
     s=settings()
     if cloud_available(s):
@@ -122,9 +125,38 @@ for source, destination, mode in (
 root_service = '''UMask=0077
 Environment=PYTHONUNBUFFERED=1
 '''
+W('/etc/systemd/system/aegisos-model.service', '''[Unit]
+Description=AegisOS Bundled Local Model
+After=network.target
+Before=aegisosd.service guardian.service
+ConditionPathExists=/usr/local/share/aegisos/models/qwen2.5-0.5b-q4_k_m.gguf
+ConditionPathExists=!/etc/aegisos/agent-disabled
+
+[Service]
+Type=simple
+Environment=LD_LIBRARY_PATH=/usr/local/libexec/aegisos/llama-b9603
+WorkingDirectory=/usr/local/libexec/aegisos/llama-b9603
+ExecStart=/usr/local/libexec/aegisos/llama-b9603/llama-server --model /usr/local/share/aegisos/models/qwen2.5-0.5b-q4_k_m.gguf --alias qwen2.5-0.5b-instruct --host 127.0.0.1 --port 8080 --ctx-size 2048 --parallel 2 --no-ui --log-disable
+Restart=on-failure
+RestartSec=10
+DynamicUser=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
+''')
 W('/etc/systemd/system/aegisosd.service', f'''[Unit]
 Description=AegisOS Root AI Agent
-After=network.target
+Wants=aegisos-model.service
+After=network.target aegisos-model.service
 ConditionPathExists=!/etc/aegisos/agent-disabled
 
 [Service]
@@ -139,7 +171,8 @@ WantedBy=multi-user.target
 ''')
 W('/etc/systemd/system/guardian.service', f'''[Unit]
 Description=Aegis Root Guardian Monitor
-After=network.target
+Wants=aegisos-model.service
+After=network.target aegisos-model.service
 ConditionPathExists=!/etc/aegisos/agent-disabled
 
 [Service]
@@ -173,7 +206,7 @@ TTYPath=/dev/console
 ''')
 wants = os.path.join(ROOTFS, 'etc/systemd/system/multi-user.target.wants')
 os.makedirs(wants, exist_ok=True)
-for svc in ['aegisosd.service', 'guardian.service']:
+for svc in ['aegisos-model.service', 'aegisosd.service', 'guardian.service']:
     dst = os.path.join(wants, svc)
     if not os.path.lexists(dst):
         os.symlink('/etc/systemd/system/' + svc, dst)

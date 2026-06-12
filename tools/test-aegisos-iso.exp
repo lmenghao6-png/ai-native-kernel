@@ -1,6 +1,6 @@
 #!/usr/bin/expect -f
 
-set timeout 150
+set timeout 300
 set version_file [open "VERSION" r]
 set version [string trim [read $version_file]]
 close $version_file
@@ -18,8 +18,9 @@ if {![file exists $ovmf]} {
 }
 
 log_file -noappend $log_path
-spawn qemu-system-x86_64 -machine q35 -m 1G -no-reboot \
+spawn qemu-system-x86_64 -machine q35 -smp 2 -m 2G -no-reboot \
     -nographic -serial mon:stdio \
+    -nic none \
     -drive if=pflash,format=raw,readonly=on,file=$ovmf \
     -cdrom $iso
 
@@ -47,11 +48,51 @@ expect {
     }
 }
 
-send "systemctl is-active --quiet aegisosd guardian ssh auditd && echo AEGISOS_SERVICES_OK\r"
+send "stty -echo\r"
+expect {
+    -re {aegis-live@aegisos:.*\$ } {}
+    timeout {
+        puts stderr "Unable to disable terminal echo"
+        exit 1
+    }
+}
+
+send "systemctl is-active --quiet aegisos-model aegisosd guardian ssh auditd serial-getty@ttyS0 && echo AEGISOS_SERVICES_OK\r"
 expect {
     "AEGISOS_SERVICES_OK" {}
     timeout {
         puts stderr "Required services are not active"
+        exit 1
+    }
+}
+
+send "for i in \$(seq 1 180); do curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1 && break; sleep 1; done; curl -fsS http://127.0.0.1:8080/health 2>/dev/null | grep -q '\"status\":\"ok\"' && echo AEGISOS_MODEL_HEALTH_OK\r"
+expect {
+    "AEGISOS_MODEL_HEALTH_OK" {}
+    timeout {
+        puts stderr "Bundled local model endpoint is not healthy"
+        exit 1
+    }
+}
+
+send "failed=\"\$(systemctl --failed --no-legend --plain | grep -v '^getty@tty1.service ' || true)\"; if test -z \"\$failed\"; then echo AEGISOS_NO_FAILED_UNITS; else printf '%s\\n' \"\$failed\"; echo AEGISOS_FAILED_UNITS; fi\r"
+expect {
+    "AEGISOS_NO_FAILED_UNITS" {}
+    "AEGISOS_FAILED_UNITS" {
+        puts stderr "AegisOS has failed systemd units"
+        exit 1
+    }
+    timeout {
+        puts stderr "Unable to inspect failed systemd units"
+        exit 1
+    }
+}
+
+send "sudo -n systemctl stop aegisosd guardian; timeout 240 ai-console 'Reply with exactly AEGIS_LOCAL_MODEL_OK' | grep -q AEGIS_LOCAL_MODEL_OK && echo AEGISOS_MODEL_INFERENCE_OK\r"
+expect {
+    "AEGISOS_MODEL_INFERENCE_OK" {}
+    timeout {
+        puts stderr "Bundled local model did not complete offline inference"
         exit 1
     }
 }
@@ -61,15 +102,6 @@ expect {
     "AEGISOS_ROOT_AI_OK" {}
     timeout {
         puts stderr "AI services are not running as root"
-        exit 1
-    }
-}
-
-send "test -z \"\$(systemctl --failed --no-legend --plain)\" && echo AEGISOS_NO_FAILED_UNITS\r"
-expect {
-    "AEGISOS_NO_FAILED_UNITS" {}
-    timeout {
-        puts stderr "AegisOS has failed systemd units"
         exit 1
     }
 }

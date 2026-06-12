@@ -24,14 +24,15 @@ if {![file exists $ovmf]} {
 }
 
 file delete -force $disk
-if {[catch {exec qemu-img create -q -f qcow2 $disk 4G} result]} {
+if {[catch {exec qemu-img create -q -f qcow2 $disk 8G} result]} {
     fail "Unable to create test disk: $result"
 }
 
 log_file -noappend $log_path
 set timeout 1200
-spawn qemu-system-x86_64 -machine q35 -m 2G -no-reboot \
+spawn qemu-system-x86_64 -machine q35 -smp 2 -m 2G -no-reboot \
     -nographic -serial mon:stdio \
+    -nic none \
     -drive if=pflash,format=raw,readonly=on,file=$ovmf \
     -drive file=$disk,format=qcow2,if=virtio \
     -cdrom $iso
@@ -76,9 +77,10 @@ expect {
     timeout { fail "Timed out waiting for installer shutdown" }
 }
 
-set timeout 240
-spawn qemu-system-x86_64 -machine q35 -m 1G -no-reboot \
+set timeout 600
+spawn qemu-system-x86_64 -machine q35 -smp 2 -m 2G -no-reboot \
     -nographic -serial mon:stdio \
+    -nic none \
     -drive if=pflash,format=raw,readonly=on,file=$ovmf \
     -drive file=$disk,format=qcow2,if=virtio
 
@@ -93,6 +95,12 @@ expect {
 expect {
     -re {aegisadmin@aegisos:.*\$ } {}
     timeout { fail "Unable to log in to the installed system" }
+}
+
+send "stty -echo\r"
+expect {
+    -re {aegisadmin@aegisos:.*\$ } {}
+    timeout { fail "Unable to disable terminal echo" }
 }
 
 send "test \"\$(findmnt -n -o SOURCE /)\" = /dev/vda3 && grep -Eq '^UUID=.* / ext4 ' /etc/fstab && grep -Eq '^UUID=.* /boot/efi vfat ' /etc/fstab && echo AEGISOS_STORAGE_OK\r"
@@ -115,17 +123,22 @@ expect {
     "AEGISOS_SSH_KEY_OK" {}
     timeout { fail "Installed SSH key or first-boot state is missing" }
 }
-send "systemctl is-active --quiet aegisosd guardian ssh auditd && test -z \"\$(systemctl --failed --no-legend --plain)\" && test -z \"\$(systemctl show -p User --value aegisosd)\" && test -z \"\$(systemctl show -p User --value guardian)\" && echo AEGISOS_INSTALLED_SERVICES_OK\r"
+send "systemctl is-active --quiet aegisos-model aegisosd guardian ssh auditd serial-getty@ttyS0 && test -z \"\$(systemctl --failed --no-legend --plain | grep -v '^getty@tty1.service ' || true)\" && test -z \"\$(systemctl show -p User --value aegisosd)\" && test -z \"\$(systemctl show -p User --value guardian)\" && echo AEGISOS_INSTALLED_SERVICES_OK\r"
 expect {
     "AEGISOS_INSTALLED_SERVICES_OK" {}
     timeout { fail "Installed services are unhealthy" }
 }
-send "printf '%s\\n' '$admin_password' | sudo -S aegisctl ai-stop >/dev/null && printf '%s\\n' '$admin_password' | sudo -S test -e /etc/aegisos/agent-disabled && ! systemctl is-active --quiet aegisosd && ! systemctl is-active --quiet guardian && echo AEGISOS_AI_STOP_OK\r"
+send "for i in \$(seq 1 180); do curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1 && break; sleep 1; done; curl -fsS http://127.0.0.1:8080/health 2>/dev/null | grep -q '\"status\":\"ok\"' && test -s /usr/local/share/aegisos/models/qwen2.5-0.5b-q4_k_m.gguf && echo AEGISOS_INSTALLED_MODEL_OK\r"
+expect {
+    "AEGISOS_INSTALLED_MODEL_OK" {}
+    timeout { fail "Installed local model is unavailable" }
+}
+send "printf '%s\\n' '$admin_password' | sudo -S aegisctl ai-stop >/dev/null && printf '%s\\n' '$admin_password' | sudo -S test -e /etc/aegisos/agent-disabled && ! systemctl is-active --quiet aegisos-model && ! systemctl is-active --quiet aegisosd && ! systemctl is-active --quiet guardian && echo AEGISOS_AI_STOP_OK\r"
 expect {
     "AEGISOS_AI_STOP_OK" {}
     timeout { fail "Root AI emergency stop did not stop the services" }
 }
-send "printf '%s\\n' '$admin_password' | sudo -S aegisctl ai-start >/dev/null && printf '%s\\n' '$admin_password' | sudo -S sh -c 'test ! -e /etc/aegisos/agent-disabled' && systemctl is-active --quiet aegisosd guardian && echo AEGISOS_AI_START_OK\r"
+send "printf '%s\\n' '$admin_password' | sudo -S aegisctl ai-start >/dev/null && printf '%s\\n' '$admin_password' | sudo -S sh -c 'test ! -e /etc/aegisos/agent-disabled' && systemctl is-active --quiet aegisos-model aegisosd guardian && echo AEGISOS_AI_START_OK\r"
 expect {
     "AEGISOS_AI_START_OK" {}
     timeout { fail "Root AI emergency stop did not recover the services" }

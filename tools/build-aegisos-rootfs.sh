@@ -32,7 +32,7 @@ sudo rm -rf "$ROOTFS"
 mkdir -p "$ROOTFS"
 
 # Stage 1: Bootstrap Debian bookworm
-echo "[1/5] Bootstrapping Debian bookworm base system..."
+echo "[1/6] Bootstrapping Debian bookworm base system..."
 sudo mmdebstrap \
     --variant=minbase \
     "${KEYRING_ARGS[@]}" \
@@ -57,7 +57,7 @@ live-boot,live-config" \
 echo "Rootfs bootstrapped: $(sudo du -sh "$ROOTFS" | cut -f1)"
 
 # Stage 2: Directory structure
-echo "[2/5] Creating AegisOS directory structure..."
+echo "[2/6] Creating AegisOS directory structure..."
 sudo mkdir -p "$ROOTFS/etc/aegisos"
 sudo mkdir -p "$ROOTFS/usr/local/lib/aegisos"
 sudo mkdir -p "$ROOTFS/usr/local/libexec/aegisos"
@@ -80,7 +80,7 @@ EOF
 sudo chmod 440 "$ROOTFS/etc/sudoers.d/aegis-live"
 
 # Stage 3: Copy agent framework
-echo "[3/5] Installing AegisOS Agent Framework..."
+echo "[3/6] Installing AegisOS Agent Framework..."
 for f in framework.py guardian.py plugins.py; do
     sudo cp "$REPO_DIR/$f" "$ROOTFS/usr/local/lib/aegisos/"
     case "$f" in
@@ -90,16 +90,20 @@ for f in framework.py guardian.py plugins.py; do
 done
 echo '"""AegisOS Agent Framework"""' | sudo tee "$ROOTFS/usr/local/lib/aegisos/__init__.py" > /dev/null
 
-# Stage 4: Configuration
-echo "[4/5] Writing configuration files..."
+# Stage 4: Local model
+echo "[4/6] Installing bundled Qwen2.5 0.5B model..."
+bash "$REPO_DIR/tools/install-local-model.sh" "$ROOTFS"
+
+# Stage 5: Configuration
+echo "[5/6] Writing configuration files..."
 
 # ai-agent.conf
 sudo tee "$ROOTFS/etc/aegisos/ai-agent.conf" > /dev/null << 'CONFEOF'
 [api]
-endpoint = https://api.deepseek.com/v1
-model = deepseek-chat
+endpoint = http://127.0.0.1:8080/v1
+model = qwen2.5-0.5b-instruct
 key =
-local_model_enabled = true
+local_model_enabled = false
 
 [agent]
 tick_interval = 10
@@ -177,6 +181,7 @@ sudo tee "$ROOTFS/etc/audit/rules.d/aegisos.rules" > /dev/null <<'EOF'
 -w /var/log/aegisos/root-actions.jsonl -p wa -k aegisos_root_actions
 -w /etc/systemd/system/aegisosd.service -p wa -k aegisos_service
 -w /etc/systemd/system/guardian.service -p wa -k aegisos_service
+-w /etc/systemd/system/aegisos-model.service -p wa -k aegisos_service
 EOF
 sudo chmod 640 "$ROOTFS/etc/audit/rules.d/aegisos.rules"
 
@@ -207,6 +212,7 @@ sudo tee "$ROOTFS/etc/motd" > /dev/null << 'MOTDEOF'
 
    Type 'ai-console' for natural language interface.
    Type 'aegisctl status' for system overview.
+   Offline model: Qwen2.5-0.5B-Instruct Q4_K_M
    Live login: aegis-live / aegisos
 MOTDEOF
 sudo sed -i "s/@AEGISOS_VERSION@/$AEGISOS_VERSION/g" "$ROOTFS/etc/motd"
@@ -219,9 +225,10 @@ printf 'AegisOS %s\n' "$AEGISOS_VERSION" | \
 # Remove dynamic MOTD scripts
 sudo rm -f "$ROOTFS/etc/update-motd.d/"* 2>/dev/null || true
 
-# Stage 5: Install CLI tools and systemd services
-echo "[5/5] Installing CLI tools and systemd services..."
+# Stage 6: Install CLI tools and systemd services
+echo "[6/6] Installing CLI tools and systemd services..."
 sudo python3 "$REPO_DIR/tools/install-agents.py" "$ROOTFS"
+sudo chroot "$ROOTFS" systemctl set-default multi-user.target
 
 echo ""
 echo "=== Build complete ==="

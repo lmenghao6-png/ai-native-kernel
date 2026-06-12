@@ -13,6 +13,8 @@ Product scope, users, requirements, and release boundaries are defined in
 - Unique administrator credentials and optional SSH public key enrollment
 - Root login locked and SSH password authentication disabled
 - Root Agent and Guardian with unrestricted system execution
+- Bundled Qwen2.5 0.5B model with a loopback-only llama.cpp service
+- Offline model inference test with VM networking disabled
 - Pre/post root action JSONL records and auditd watches
 - Local emergency stop marker and `aegisctl ai-stop`
 - Active UFW default-deny incoming policy with SSH exception
@@ -39,6 +41,6 @@ Product scope, users, requirements, and release boundaries are defined in
 - All Python, ISO boot, installation, reboot, update, and rollback tests pass
 - Tagged builds contain an injected release trust key
 - ISO checksums, release manifest, and application update manifest are signed
-- A clean installed VM can engage the emergency stop without either AI unit
+- A clean installed VM can engage the emergency stop without any AI unit
   restarting
 - Known security limitations are published in `SECURITY.md`
